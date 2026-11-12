@@ -1,0 +1,34 @@
+{
+  "scope": "4 MiB of the supplied IMG, placed in a sparse partial test container; NOT a full IMG or physical SD end-to-end test",
+  "platform": "macOS 15.7.7, arm64",
+  "unit_tests": {
+    "count": 17,
+    "failed": 0
+  },
+  "native_decode": {
+    "control_lba": 931770,
+    "first_record_lba": 931772,
+    "height": 1080,
+    "width": 2560,
+    "input_size_and_mtime_unchanged": true,
+    "mode": "O_RDONLY",
+    "native_videotoolbox_decoded_frames": 99,
+    "partial_scan": true,
+    "recordings": 1,
+    "rejected_candidates": 0,
+    "validated_frames": 99,
+    "timing_note": "Playback timing is provisional; packet field 0x1E8 is not interpreted as FPS."
+  },
+  "gui_smoke": {
+    "passed": true,
+    "window_visible": true,
+    "preview_height": 1080,
+    "preview_width": 2560,
+    "seek_to_frame_20": true,
+    "playback_advanced": true,
+    "validated_frames": 99,
+    "partial_scan": true
+  },
+  "composited_window_capture_verified": true,
+  "private_media_committed": false
+}
