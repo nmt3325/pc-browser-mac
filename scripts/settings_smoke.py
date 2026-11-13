@@ -2,8 +2,9 @@
 """Synthetic recording-settings card image and independent checks of --settings-show / --settings-apply (generic bytes only).
 
 The image is built here from scratch (nothing from a real card): MBR, a FAT16 partition with a CONFIG folder, the control and channel
-sectors in the layout that was established from the original application, and their backups at the end of the disk. The checks
-re-implement the checksum, the region table and a FAT16 reader independently of the Swift code.
+sectors in the layout that was established from the original application, and their backups directly behind the last journal sector.
+The checks re-implement the checksum, the region table and a FAT16 reader independently of the Swift code. The image is a sparse file
+of about 179 MB (a real 168 h history needs that much), so every check reads only the sectors it needs.
 """
 import hashlib
 import json
@@ -13,14 +14,17 @@ import subprocess
 from pathlib import Path
 
 MARKER = b'YP_FORMAT_1.01__\0'
-JOURNAL_END = 60_000_000
-TOTAL_SECTORS = 4150
+JOURNAL_END = 350_000
+TOTAL_SECTORS = JOURNAL_END + 10
 PARTITION_SECTORS = 4137
 CONTROL = 1 + PARTITION_SECTORS
 CHANNEL = CONTROL + 1
 FIRST_RECORD = CONTROL + 4
-BACKUP_CHANNEL = TOTAL_SECTORS - 3
-BACKUP_CONTROL = TOTAL_SECTORS - 2
+BACKUP_CHANNEL = JOURNAL_END + 1
+BACKUP_CONTROL = JOURNAL_END + 2
+HISTORY_SECTORS = 168 * 1800
+JOURNAL_START = JOURNAL_END - HISTORY_SECTORS + 1
+NORMAL_END = JOURNAL_START * 71 // 1200 * 12
 VERSION_TEXT = b'[SYNTHETIC]\r\nKEY=1\r\n'
 
 
@@ -50,7 +54,7 @@ def factory(first):
     c[0x21:0x29], c[0x29:0x31], c[0x31:0x39] = first8, event8, event8
     c[0x3A:0x40] = bytes([2, 2, 2, 1, 3, 1])
     c[0x46], c[0x47], c[0x48], c[0x49], c[0x4A], c[0x50], c[0x51] = 5, 2, 5, 5, 5, 3, 1
-    for i, v in enumerate((first, 42_385_296, 42_385_297, 59_697_600, 59_697_601, JOURNAL_END)):
+    for i, v in enumerate((first, NORMAL_END, NORMAL_END + 1, JOURNAL_START - 1, JOURNAL_START, JOURNAL_END)):
         word(c, 0x1BE + 4 * i, v)
     for i in range(8):
         c[0x1D6 + i] = 0xA1 + i
@@ -99,26 +103,57 @@ def fat16_partition(sectors, fat_sectors=17):
     return bytes(p)
 
 
-def image():
-    d = bytearray(TOTAL_SECTORS * 512)
-    d[0x1BE + 4] = 0x06
-    word(d, 0x1BE + 8, 1)
-    word(d, 0x1BE + 12, PARTITION_SECTORS)
-    d[510:512] = b'\x55\xaa'
-    d[512:512 + PARTITION_SECTORS * 512] = fat16_partition(PARTITION_SECTORS)
+def write_image(path):
+    """Writes the sparse synthetic card image: only the sectors that carry data are written."""
     control, channel = factory(FIRST_RECORD)
-    for sector, data in ((CONTROL, control), (CHANNEL, channel), (BACKUP_CHANNEL, channel), (BACKUP_CONTROL, control)):
-        d[sector * 512:(sector + 1) * 512] = data
-    return bytes(d)
+    mbr = bytearray(512)
+    mbr[0x1BE + 4] = 0x06
+    word(mbr, 0x1BE + 8, 1)
+    word(mbr, 0x1BE + 12, PARTITION_SECTORS)
+    mbr[510:512] = b'\x55\xaa'
+    with open(path, 'wb') as f:
+        f.truncate(TOTAL_SECTORS * 512)
+        f.seek(0)
+        f.write(mbr)
+        f.seek(512)
+        f.write(fat16_partition(PARTITION_SECTORS))
+        for n, data in ((CONTROL, control), (CHANNEL, channel), (BACKUP_CHANNEL, channel), (BACKUP_CONTROL, control)):
+            f.seek(n * 512)
+            f.write(data)
 
 
-def sector(data, n):
-    return data[n * 512:(n + 1) * 512]
+def read_range(path, start, length):
+    with open(path, 'rb') as f:
+        f.seek(start)
+        return f.read(length)
+
+
+def sector(path, n):
+    return read_range(path, n * 512, 512)
+
+
+def file_sha(path):
+    h = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for chunk in iter(lambda: f.read(1 << 20), b''):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def changed_sectors(a, b):
-    assert len(a) == len(b)
-    return {n for n in range(len(a) // 512) if sector(a, n) != sector(b, n)}
+    """Numbers of the sectors that differ between two image files (compared in 1 MiB steps)."""
+    assert Path(a).stat().st_size == Path(b).stat().st_size
+    result, offset = set(), 0
+    with open(a, 'rb') as fa, open(b, 'rb') as fb:
+        while True:
+            x, y = fa.read(1 << 20), fb.read(1 << 20)
+            if not x and not y:
+                break
+            assert len(x) == len(y)
+            if x != y:
+                result |= {(offset + i) // 512 for i in range(0, len(x), 512) if x[i:i + 512] != y[i:i + 512]}
+            offset += len(x)
+    return result
 
 
 def changed_offsets(a, b):
@@ -180,6 +215,11 @@ class Fat16:
         return data[:item['size']]
 
 
+def volume_bytes(path):
+    """The MBR and the FAT16 partition of an image file (everything the volume checks need)."""
+    return read_range(path, 0, (1 + PARTITION_SECTORS) * 512)
+
+
 def check_volume(disk):
     """Both FAT copies agree and the allocated clusters are exactly the chains reachable from the directory entries."""
     f = Fat16(disk)
@@ -233,11 +273,11 @@ def load(path):
 
 def run(binary, root):
     root = Path(root)
-    base = image()
     card = root / 'settings-card.img'
-    card.write_bytes(base)
+    write_image(card)
+    card_hash = file_sha(card)
     card.chmod(0o444)
-    base_control, base_channel = sector(base, CONTROL), sector(base, CHANNEL)
+    base_control, base_channel = sector(card, CONTROL), sector(card, CHANNEL)
     assert checksum_ok(base_control, base_channel)
     result = {}
 
@@ -264,15 +304,15 @@ def run(binary, root):
     assert {'音声記録', 'ビープ音', 'SDカードID'} <= set(plan['changes']), plan['changes']
     assert plan['patches'][0]['newSHA256'] == plan['patches'][2]['newSHA256']
     assert plan['patches'][0]['oldSHA256'] == sha(base_control)
+    assert [p['sector'] for p in plan['patches']] == [CONTROL, CHANNEL, BACKUP_CONTROL, BACKUP_CHANNEL], plan['patches']
 
     # 3. Apply to a NEW copy: only the control sector and its backup change, in exactly the modelled bytes.
     out1 = root / 'settings-out1.img'
     report1 = root / 'settings-out1.json'
     ok(binary, '--settings-apply', card, *plain, '--out', out1, '--report', report1)
-    written = out1.read_bytes()
-    assert len(written) == len(base) and changed_sectors(base, written) == {CONTROL, BACKUP_CONTROL}, changed_sectors(base, written)
-    new_control = sector(written, CONTROL)
-    assert sector(written, BACKUP_CONTROL) == new_control and sector(written, BACKUP_CHANNEL) == base_channel
+    assert out1.stat().st_size == card.stat().st_size and changed_sectors(card, out1) == {CONTROL, BACKUP_CONTROL}, changed_sectors(card, out1)
+    new_control = sector(out1, CONTROL)
+    assert sector(out1, BACKUP_CONTROL) == new_control and sector(out1, BACKUP_CHANNEL) == base_channel
     assert changed_offsets(base_control, new_control) - {0x12, 0x13} == {0x3F, 0x50} | set(range(0x66, 0x66 + 7)), sorted(changed_offsets(base_control, new_control))
     assert new_control[0x3F] == 2 and new_control[0x50] == 0 and new_control[0x66:0x6D] == b'ABC-123' and new_control[0x6D] == 0
     assert checksum_ok(new_control, base_channel)
@@ -283,22 +323,19 @@ def run(binary, root):
     ok(binary, '--settings-show', out1, '--report', shown_again)
     t = load(shown_again)['settings']
     assert (t['audio'], t['beep'], t['cardID']) == (False, False, 'ABC-123') and t['mode'] == 'both', t
-    assert sha(card.read_bytes()) == sha(base), 'the input image must not change'
+    assert file_sha(card) == card_hash, 'the input image must not change'
     result['plain_edit'] = {'clone': out['usedClone'], 'changed_sectors': 2}
 
     # 4. Layout change: event-only, slower rate clamped, region table recomputed, generation 1 -> 2.
     out2 = root / 'settings-out2.img'
     ok(binary, '--settings-apply', card, '--set', 'fps=7', '--set', 'mode=event', '--out', out2)
-    layout = out2.read_bytes()
-    assert changed_sectors(base, layout) == {CONTROL, CHANNEL, BACKUP_CONTROL, BACKUP_CHANNEL}, changed_sectors(base, layout)
+    assert changed_sectors(card, out2) == {CONTROL, CHANNEL, BACKUP_CONTROL, BACKUP_CHANNEL}, changed_sectors(card, out2)
     expected = bytearray(base_control)
     expected[0x21:0x29] = bytes([0x0B, 0xB0, 0x36, 0x01, 0x01, 0, 0, 0])
     for o in (0x29, 0x31):
         expected[o:o + 8] = bytes([0x0B, 0xB0, 0x36, 0x01, 0x01, 0, 30, 0])
     expected[0x3A], expected[0x3E] = 1, 2
-    sectors = 168 * 1800
-    js = JOURNAL_END - sectors + 1
-    for i, v in enumerate((0, 0, FIRST_RECORD, js - 1, js, JOURNAL_END)):
+    for i, v in enumerate((0, 0, FIRST_RECORD, JOURNAL_START - 1, JOURNAL_START, JOURNAL_END)):
         word(expected, 0x1BE + 4 * i, v)
     expected[0x00] = expected[0x1FF] = 2
     for o in (0x1E0, 0x1E4, 0x1E8):
@@ -306,8 +343,8 @@ def run(binary, root):
     expected_channel = bytearray(base_channel)
     expected_channel[0x20:0x39] = expected[0x20:0x39]
     want_control, want_channel = seal(bytes(expected), bytes(expected_channel))
-    assert sector(layout, CONTROL) == want_control and sector(layout, CHANNEL) == want_channel
-    assert sector(layout, BACKUP_CONTROL) == want_control and sector(layout, BACKUP_CHANNEL) == want_channel
+    assert sector(out2, CONTROL) == want_control and sector(out2, CHANNEL) == want_channel
+    assert sector(out2, BACKUP_CONTROL) == want_control and sector(out2, BACKUP_CHANNEL) == want_channel
     # Choosing the slower rate AFTER event-only is refused (the dialog does not offer it).
     late = root / 'settings-late.img'
     refused(binary, '--settings-apply', card, '--set', 'mode=event', '--set', 'fps=7', '--out', late)
@@ -316,19 +353,17 @@ def run(binary, root):
     out2b = root / 'settings-out2b.img'
     out2.chmod(0o444)
     ok(binary, '--settings-apply', out2, '--set', 'history-hours=24', '--out', out2b)
-    again = out2b.read_bytes()
-    assert again[CONTROL * 512] == 2 and checksum_ok(sector(again, CONTROL), sector(again, CHANNEL))
+    assert sector(out2b, CONTROL)[0] == 2 and checksum_ok(sector(out2b, CONTROL), sector(out2b, CHANNEL))
     result['layout_edit'] = {'generation_after': 2, 'changed_sectors': 4}
 
     # 5. Command files: TIME.INI and SELFADJ.INI are created on the copy through a FAT16 writer, nothing else moves.
     out3 = root / 'settings-out3.img'
     report3 = root / 'settings-out3.json'
     ok(binary, '--settings-apply', card, '--set', 'time=2026-03-04T05:06:07', '--set', 'angle=on', '--out', out3, '--report', report3)
-    files = out3.read_bytes()
-    assert changed_sectors(base, files) <= set(range(1, 1 + PARTITION_SECTORS)), 'only the FAT16 partition may change'
+    assert changed_sectors(card, out3) <= set(range(1, 1 + PARTITION_SECTORS)), 'only the FAT16 partition may change'
     for n in (CONTROL, CHANNEL, BACKUP_CHANNEL, BACKUP_CONTROL):
-        assert sector(files, n) == sector(base, n)
-    f, names = check_volume(files)
+        assert sector(out3, n) == sector(card, n)
+    f, names = check_volume(volume_bytes(out3))
     assert set(names) == {b'.          ', b'..         ', b'VERSION INI', b'TIME    INI', b'SELFADJ INI'}, names
     assert f.read(names[b'TIME    INI']) == b'[SET]\r\nLOCALTIME=2026.03.04;05:06:07' and names[b'TIME    INI']['size'] == 36
     assert names[b'SELFADJ INI']['size'] == 0 and names[b'SELFADJ INI']['cluster'] == 0
@@ -347,13 +382,13 @@ def run(binary, root):
     assert not nothing.exists()
     out3b = root / 'settings-out3b.img'
     ok(binary, '--settings-apply', out3, '--set', 'time=2027-12-31T23:59:58', '--out', out3b)
-    f, names = check_volume(out3b.read_bytes())
+    f, names = check_volume(volume_bytes(out3b))
     assert f.read(names[b'TIME    INI']) == b'[SET]\r\nLOCALTIME=2027.12.31;23:59:58' and b'SELFADJ INI' in names
 
     # 6. Removal frees the entries and clusters again.
     out4 = root / 'settings-out4.img'
     ok(binary, '--settings-apply', out3, '--set', 'time=none', '--set', 'angle=off', '--out', out4)
-    f, names = check_volume(out4.read_bytes())
+    f, names = check_volume(volume_bytes(out4))
     assert set(names) == {b'.          ', b'..         ', b'VERSION INI'}, names
     _, deleted = f.directory(2)
     assert {d['name'][1:] for d in deleted} >= {b'IME    INI', b'ELFADJ INI'}, deleted
@@ -369,7 +404,7 @@ def run(binary, root):
         target = root / 'settings-bad.img'
         refused(binary, '--settings-apply', card, '--set', bad[0], '--out', target)
         assert not target.exists(), bad
-    assert sha(card.read_bytes()) == sha(base), 'the input image must not change'
+    assert file_sha(card) == card_hash, 'the input image must not change'
     result['refusals'] = True
 
     # 8. macOS's own FAT checker on the partition after create / delete (informational: recorded, not asserted).
@@ -377,7 +412,7 @@ def run(binary, root):
     checks = {}
     for name, path in (('created', out3), ('removed', out4)):
         part = root / ('settings-part-%s.img' % name)
-        part.write_bytes(path.read_bytes()[512:512 + PARTITION_SECTORS * 512])
+        part.write_bytes(read_range(path, 512, PARTITION_SECTORS * 512))
         try:
             p = subprocess.run([fsck, '-n', str(part)], capture_output=True, text=True, timeout=60)
             checks[name] = {'exit': p.returncode, 'tail': (p.stdout + p.stderr)[-300:]}

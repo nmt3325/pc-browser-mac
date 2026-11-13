@@ -49,7 +49,7 @@ The packet header (D101) and its mirror copy (D102) are byte-identical **except*
 
 The original's "記録設定" dialog was driven under the same hook. Observations:
 
-- the Q-01 card keeps its settings in **raw sectors**, not in `SET.INI`: the first sector after the FAT partition (control sector, which begins with the `YP_FORMAT_1.01__` marker), its backup in the second-to-last disk sector, one settings sector per channel directly after the control sector and its backup directly before the last control backup;
+- the Q-01 card keeps its settings in **raw sectors**, not in `SET.INI`: the first sector after the FAT partition (control sector, which begins with the `YP_FORMAT_1.01__` marker), one settings sector per channel directly after the control sector, and the backups of both directly behind the last journal sector named by the region table (channel copy first, control copy second). A first version of the Mac code assumed the backups sat at the end of the disk; the original's own writes on the real card showed that is wrong, and `RecordingSettingsStore.locate` now follows the region table;
 - 「SDカードへ保存」 with unchanged values closes without writing; with changed values it asks for confirmation and then writes the four sector kinds above;
 - the dialog data model (which controls exist, their item lists and defaults) is read from the dialog traffic, not guessed.
 
