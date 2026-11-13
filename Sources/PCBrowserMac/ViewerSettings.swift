@@ -78,6 +78,12 @@ struct ViewerSettings: View {
                         SettingsHelp("G・ジャイロは符号付きraw値で表示します。機種別の物理単位換算・軸方向は未確定です。")
                     }
                     GPSSynchronizationPreferences(model: model)
+                    SettingsGroup("センサー換算（任意・未入力ならraw表示）") {
+                        SettingsHelp("原版の加速度スケールは目盛り（拡大±1.0／標準±2.0／縮小1±3.0／縮小2±4.0、ジャイロは±36／72／108／144）まで確認済みですが、rawからの換算係数は未確定です。既知の係数を入力した場合だけ、センサー表示を原版の目盛りで物理値表示します。")
+                        Picker("表示スケール", selection: $model.sensorScale) { ForEach(GSensorScale.allCases, id: \.self) { Text($0.label).tag($0) } }.pickerStyle(.segmented)
+                        CalibrationField(title: "加速度 counts/G", hint: "例: 8192", value: $model.sensorCalibration.accelerationCountsPerUnit)
+                        CalibrationField(title: "ジャイロ counts/単位", hint: "例: 131", value: $model.sensorCalibration.gyroCountsPerUnit)
+                    }
                 }.tabItem { Text("音声・GPS") }.tag(1)
                 ExportPreferences(model: model).tabItem { Text("書き出し・印刷") }.tag(2)
                 RawSensorSearchPreferences(model: model).tabItem { Text("raw検索") }.tag(3)
@@ -114,6 +120,23 @@ struct ViewerSettings: View {
         }.font(.caption)
     }
 }
+struct CalibrationField: View {
+    let title: String
+    let hint: String
+    @Binding var value: Double?
+    @State private var text = ""
+    var body: some View {
+        HStack {
+            Text(title).frame(width: 150, alignment: .leading)
+            TextField(hint, text: $text).textFieldStyle(.roundedBorder).onSubmit { commit() }
+            Button("適用") { commit() }
+            Button("消去") { text = ""; value = nil }
+        }.font(.caption).onAppear { text = value.map { String($0) } ?? "" }
+    }
+    private func commit() {
+        if let parsed = Double(text.trimmingCharacters(in: .whitespaces)), parsed.isFinite, parsed > 0 { value = parsed } else { value = nil; text = "" }
+    }
+}
 struct CapabilitiesView:View {
     @Environment(\.dismiss) private var dismiss
     let rows:[(String,String)]=[
@@ -122,6 +145,7 @@ struct CapabilitiesView:View {
         ("360°表示","フラット、パノラマ、前後、4／16分割、ドーム、リング、全球。標準魚眼モデル・手動校正。"),
         ("確認と書き出し","シーク、逆再生、速度、NIGHT、回転、しおり、検索、PNG/JPEG、音声付きMP4 / Motion JPEG AVI、選択字幕、WAV、間隔指定静止画・ページ印刷。"),
         ("全機能互換ではありません","機種別工場校正、暗号化カード、全機種形式、SD設定書き戻し、フォーマット／削除は未対応。"),
+        ("原版メニュー対応表","メニューバーの「Mac独自 ▸ 原版メニュー対応表」で、原版の全コマンドごとに実装状況・ブロック理由・原本保護の判断を確認できます。"),
         ("検証範囲","実IMG全体の解析と、実映像のMacテストを区別します。物理SD、長時間全録画デコード、Intel、署名・公証は別途検証が必要です。")]
     var body:some View {VStack(alignment:.leading,spacing:16){HStack{Text("PC Browser Mac · 対応状況").font(.title2);Spacer();Button("閉じる"){dismiss()}.keyboardShortcut(.cancelAction)};ForEach(Array(rows.enumerated()),id:\.offset){_,row in VStack(alignment:.leading,spacing:5){Text(row.0).font(.headline);Text(row.1).font(.callout).foregroundStyle(.secondary)}};Spacer(minLength:0)}.padding(25).frame(width:700,height:590)}
 }

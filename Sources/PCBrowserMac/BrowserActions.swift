@@ -8,7 +8,7 @@ extension BrowserModel {
     func destination(_ name:String,extension ext:String)->URL? {
         let p=NSSavePanel();p.nameFieldStringValue=name+"."+ext;p.title="新しいファイルへ書き出し";p.canCreateDirectories=true
         if p.runModal() == .OK,let u=p.url {
-            if FileManager.default.fileExists(atPath:u.path){errorMessage="既存ファイルには上書きしません。新しい出力名を選んでください";return nil}
+            if case .refused(let reason)=WriteGuard.checkNewOutput(u,protecting:[sourceURL].compactMap{$0}){errorMessage=reason;return nil}
             return u
         };return nil
     }

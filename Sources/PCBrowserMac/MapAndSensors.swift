@@ -55,13 +55,34 @@ struct SensorSample:Identifiable,Sendable {
 struct SensorPanel:View {
     @ObservedObject var model:BrowserModel
     @State private var kind="加速度"
+    private var isAcceleration:Bool {kind=="加速度"}
+    private var factor:Double? {isAcceleration ? model.sensorCalibration.accelerationCountsPerUnit:model.sensorCalibration.gyroCountsPerUnit}
+    private var calibrated:Bool {if let factor,factor.isFinite,factor>0{return true};return false}
+    private func shown(_ raw:Double)->Double {if calibrated,let factor{return raw/factor};return raw}
+    private var rows:[SensorSample] {model.sensors.filter{$0.kind==kind}}
+    private var yDomain:ClosedRange<Double> {
+        if calibrated {let full=isAcceleration ? model.sensorScale.accelerationFullScale:model.sensorScale.gyroFullScale;return -full...full}
+        let values=rows.map{$0.value};let low=min(values.min() ?? -1,-1),high=max(values.max() ?? 1,1);return low...high
+    }
+    private var tickValues:[Double] {
+        if calibrated {return isAcceleration ? model.sensorScale.accelerationTickValues:model.sensorScale.gyroTickValues}
+        let range=yDomain;return [range.upperBound,range.upperBound/2,0,range.lowerBound/2,range.lowerBound]
+    }
+    private func tickLabel(_ value:Double)->String {calibrated && isAcceleration ? String(format:"%.1f",value):String(format:"%.0f",value)}
+    private var note:String {
+        var text=calibrated ? "利用者入力の換算係数 · 目盛りは原版の「\(model.sensorScale.label)」":"raw counts · 原版の換算係数は未確定（設定▸音声・GPSで任意入力）"
+        if let legacy=model.legacyModel,legacy.sensorPanelClass==0 {text+=" · 選択機種の原版はセンサーパネルを描画しません"}
+        return text
+    }
     var body:some View {
         VStack(alignment:.leading,spacing:5) {
-            HStack {Picker("センサー",selection:$kind){Text("加速度").tag("加速度");Text("ジャイロ").tag("ジャイロ")}.pickerStyle(.segmented).frame(width:200);Spacer();Text("raw counts · 換算係数／軸向きは未確定").font(.caption).foregroundStyle(.secondary)}
+            HStack {Picker("センサー",selection:$kind){Text("加速度").tag("加速度");Text("ジャイロ").tag("ジャイロ")}.pickerStyle(.segmented).frame(width:200);Spacer();Text(note).font(.caption).foregroundStyle(.secondary)}
             Chart {
-                ForEach(model.sensors.filter{$0.kind==kind}){sample in LineMark(x:.value("録画内の秒",sample.time),y:.value("raw",sample.value)).foregroundStyle(by:.value("軸",sample.axis)).lineStyle(StrokeStyle(lineWidth:1.4))}
+                ForEach(rows){sample in LineMark(x:.value("録画内の秒",sample.time),y:.value("値",shown(sample.value))).foregroundStyle(by:.value("軸",sample.axis)).lineStyle(StrokeStyle(lineWidth:1.4))}
                 RuleMark(x:.value("現在",model.currentSeconds)).foregroundStyle(.secondary).lineStyle(StrokeStyle(lineWidth:1,dash:[4]))
-            }.chartForegroundStyleScale(["X":Color.orange,"Y":Color.green,"Z":Color.blue]).chartXAxisLabel("録画内の秒").chartYAxisLabel("raw").frame(minHeight:120)
+            }.chartForegroundStyleScale(["X":Color.orange,"Y":Color.green,"Z":Color.blue]).chartXAxisLabel("録画内の秒").chartYAxisLabel(calibrated ? "換算値":"raw").chartYScale(domain:yDomain)
+            .chartYAxis {AxisMarks(values:tickValues){value in AxisGridLine();AxisTick();AxisValueLabel{Text(tickLabel(value.as(Double.self) ?? 0))}}}
+            .frame(minHeight:120)
         }.padding(10)
     }
 }
