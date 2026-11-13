@@ -38,7 +38,13 @@ final class ScanCancellation: @unchecked Sendable {
             }
             guard let image=model.image, let index=model.index, index.frameCount > 30 else { throw BrowserError.io("GUI映像表示の待機が終了しました") }
             result["window_visible"] = window?.isVisible ?? false
-            result["validated_frames"] = index.frameCount
+            result["indexed_frames_estimate"] = index.frameCount
+            result["validated_frames"] = index.validatedFrameCount
+            result["continuous_recordings"] = index.recordings.count
+            result["storage_blocks"] = index.blockCount
+            result["first_list_seconds"] = model.firstListSeconds
+            result["catalog_seconds"] = model.catalogSeconds
+            result["selected_detail_seconds"] = model.detailSeconds
             result["partial_scan"] = index.isPartialScan
             result["preview_width"] = Int(image.size.width);result["preview_height"] = Int(image.size.height)
             await model.renderFrame(20)
@@ -62,6 +68,21 @@ final class ScanCancellation: @unchecked Sendable {
             model.togglePlay(backwards:true);try await Task.sleep(nanoseconds:500_000_000);model.pause()
             result["reverse_playback_decreased"]=model.frameIndex<beforeReverse
             guard model.frameIndex<beforeReverse else {throw BrowserError.io("逆再生位置が戻りませんでした")}
+            if let r=model.recording {
+                let boundaries=r.packets.indices.dropFirst().filter{r.packets[$0].recordSector != r.packets[$0-1].recordSector}
+                var crossed:[Int]=[]
+                for boundary in boundaries.prefix(2) {
+                    let selection=model.selectedID;await model.renderFrame(max(0,boundary-6));model.togglePlay(backwards:false)
+                    try await Task.sleep(nanoseconds:700_000_000)
+                    let at=model.frameIndex,audio=model.activeAudioClockSeconds,video=model.currentSeconds;model.pause()
+                    guard at>boundary,model.selectedID==selection,let audio,abs(video-audio)<0.35 else {throw BrowserError.io("内部保存ブロックの境界を連続再生できませんでした（\(boundary)）")}
+                    crossed.append(boundary)
+                }
+                result["continuously_played_boundaries"]=crossed
+                result["one_timeline_seconds"]=model.timeline.duration
+                result["audio_video_duration_difference_seconds"]=model.audioDrift
+            }
+            result["archive_sha256_status"]=model.archiveNotice
             var modes:[String:Bool]=[:]
             for mode in ProjectionMode.allCases {model.projection.mode=mode;await model.renderFrame(0);modes[mode.rawValue]=model.displayedFrame != nil}
             result["projection_modes"]=modes

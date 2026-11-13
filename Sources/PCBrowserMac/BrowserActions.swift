@@ -16,9 +16,11 @@ extension BrowserModel {
         do{try MediaExport.still(image,to:u,jpeg:jpeg);status="静止画を書き出しました"}catch{errorMessage=error.localizedDescription}
     }
     func exportLog(_ type:String) {
-        let records=selectedRecordings;guard !records.isEmpty,let u=destination("PCBrowser-route",extension:type) else{return};let datum=datum
+        let summaries=selectedRecordings;guard let source,!summaries.isEmpty,let u=destination("PCBrowser-route",extension:type) else{return};let datum=datum
         performExport(type.uppercased()+"書き出し"){flag,progress in
             if flag.cancelled{throw BrowserError.io("キャンセルしました")}
+            var records:[Recording]=[]
+            for (i,r) in summaries.enumerated(){records.append(try CatalogScanner.loadRecording(r,source:source,cancelled:{flag.cancelled}));progress(Double(i+1)/Double(summaries.count)*0.8)}
             let text:String
             switch type {case "kml":text=TrackExport.kml(records,datum:datum);case "gpx":text=TrackExport.gpx(records,datum:datum);default:text=TrackExport.csv(records,datum:datum)}
             try Data(text.utf8).write(to:u,options:.withoutOverwriting);progress(1)
@@ -27,8 +29,8 @@ extension BrowserModel {
     func exportAudio() {
         guard let source,let r=recording,let u=destination("PCBrowser-audio",extension:"wav") else{return}
         let range=exportFrames,timeline=timeline
-        performExport("WAV書き出し"){_,progress in
-            let f=try PCMFormat.recordFormat(source:source,recording:r),clip=try AudioClip.load(source:source,packets:r.packets,format:f)
+        performExport("WAV書き出し"){flag,progress in
+            let f=try PCMFormat.recordFormat(source:source,recording:r),clip=try AudioClip.load(source:source,packets:r.packets,format:f,cancelled:{flag.cancelled})
             let begin=min(clip.duration,timeline.starts[range.lowerBound]),end=min(clip.duration,timeline.starts[range.upperBound-1]+1/timeline.nominalFPS)
             guard begin<end else{throw BrowserError.invalid("選択範囲に音声がありません")}
             try clip.wav(range:begin..<end).write(to:u,options:.withoutOverwriting);progress(1)
@@ -43,7 +45,11 @@ extension BrowserModel {
     func backup() {
         guard let source,let index,!selectedRecordings.isEmpty,let u=destination("PCBrowser-selected",extension:"pcbbackup") else{return}
         let records=selectedRecordings,name=sourceName
-        performExport("選択録画のバックアップ"){flag,progress in try ArchiveWriter.write(source:source,index:index,recordings:records,name:name,to:u,cancelled:{flag.cancelled},progress:progress)}
+        performExport("選択録画のバックアップ"){flag,progress in
+            var loaded:[Recording]=[]
+            for (i,r) in records.enumerated(){loaded.append(try CatalogScanner.loadRecording(r,source:source,cancelled:{flag.cancelled}));progress(Double(i+1)/Double(records.count)*0.1)}
+            try ArchiveWriter.write(source:source,index:index,recordings:loaded,name:name,to:u,cancelled:{flag.cancelled},progress:{progress(0.1+$0*0.9)})
+        }
     }
     func exportSequence() {
         guard let source,let r=recording else{return};let panel=NSOpenPanel();panel.canChooseDirectories=true;panel.canChooseFiles=false;panel.title="静止画連続出力の保存先"
