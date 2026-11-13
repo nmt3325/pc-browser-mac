@@ -233,6 +233,7 @@ final class ScanCancellation: @unchecked Sendable {
     @MainActor static func main() async {
         if CommandLine.arguments.contains("--inspect") { exit(await InspectionCLI.run(CommandLine.arguments)) }
         if let output=InspectionCLI.value("--legacy-inventory",in:CommandLine.arguments) { exit(InspectionCLI.legacyInventory(output)) }
+        if let output=InspectionCLI.value("--view-check",in:CommandLine.arguments) { exit(InspectionCLI.viewCheck(output)) }
         runApplication()
     }
     @MainActor static func runApplication() {
