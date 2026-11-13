@@ -1,0 +1,45 @@
+{
+  "status": "Structural tests passed. Build, unit tests and extracted-package CLI checks moved to GitHub Actions; renewed private-media GUI validation remains incomplete.",
+  "unit_tests": {
+    "passed": 68,
+    "failures": 0
+  },
+  "mac_header_only_fixture": {
+    "original_logical_bytes": 31486640128,
+    "storage_blocks": 993,
+    "indexed_frames_estimate": 439666,
+    "display_groups": 34,
+    "catalog_seconds": 11.68551375000061,
+    "first_cli_progress_row_seconds": 0.0035077916663794895,
+    "requested_bytes": 78028800,
+    "requested_reads": 152400,
+    "backlink_blocks": 823,
+    "rejected_candidates": 0,
+    "all_headers_validated": 439666,
+    "explicit_detail_seconds": 55.22391466666704,
+    "input_size_and_mtime_unchanged": true,
+    "physical_SD_benchmark": false,
+    "contains_H264_or_PCM_payload": false
+  },
+  "prior_iteration_real_media_checks": {
+    "unit_test_count_at_that_iteration": 67,
+    "partial_media_frames": 1200,
+    "storage_blocks": 3,
+    "continuous_recordings": 1,
+    "videotoolbox_decoded_frames": 1200,
+    "GUI_crossed_boundaries": [
+      450,
+      900
+    ],
+    "timeline_seconds": 40.03333333333363,
+    "PCM_seconds": 40.033375,
+    "full_MP4_strict_AV_decode_passed": true,
+    "latest_iteration_recheck_completed": false
+  },
+  "pending": [
+    "Renewed latest-build private-media GUI validation",
+    "Exact block-inventory digest comparison completion"
+  ],
+  "ci_workflow": ".github/workflows/macos.yml",
+  "ci_run_result": "See each workflow run and its build-metadata.json; no unexecuted CI pass is asserted here."
+}

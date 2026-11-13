@@ -21,3 +21,8 @@ private-*/
 *.kml
 *.gpx
 *.zip
+
+# GitHub Actions outputs
+dist/
+unit-tests.log
+__pycache__/
