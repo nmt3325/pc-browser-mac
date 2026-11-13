@@ -131,7 +131,7 @@ import PCBrowserCore
     }
     private func saveViewerPreferences() {if let d=try? JSONEncoder().encode(projection.clamped){UserDefaults.standard.set(d,forKey:"pcbrowser.projection")};UserDefaults.standard.set(datum.rawValue,forKey:"pcbrowser.gpsdatum")}
     func openPanel() {
-        let p=NSOpenPanel();p.title="SDカードのIMGまたは.pcbbackupを開く";p.canChooseDirectories=true;p.canChooseFiles=true;p.allowsMultipleSelection=false
+        let p=NSOpenPanel();p.title="SDカードのIMG・Windows BAK・.pcbbackupを開く";p.canChooseDirectories=true;p.canChooseFiles=true;p.allowsMultipleSelection=false
         if p.runModal() == .OK,let u=p.url{open(u)}
     }
     func open(_ url:URL,limit:UInt64?=nil) {
@@ -156,7 +156,7 @@ import PCBrowserCore
         cancel();generation=UUID();let token=generation,flag=ScanCancellation(),began=ProcessInfo.processInfo.systemUptime;cancellation=flag
         self.source=source;scanLimit=limit;index=nil;selectedID=nil;image=nil;sourceName=name;progress=0;scanning=true;busy=false;errorMessage=nil;selectedExports=[];cardFiles=[];rawQueryResults=[:]
         useExternalGPS=false;externalGPSTrack=nil;externalGPSStatus="外部ログ未選択";deviceTimeZoneID="";gpsLogOffset=0
-        firstListSeconds=0;catalogSeconds=0;detailSeconds=0;archiveNotice=(source as? ArchiveSource)?.isHashVerified == false ? "バックアップSHA-256: 未照合（一覧表示後に照合）":""
+        firstListSeconds=0;catalogSeconds=0;detailSeconds=0;archiveNotice=(source as? ArchiveSource)?.isHashVerified == false ? "バックアップSHA-256: 未照合（一覧表示後に照合）":(source is WindowsBackupSource ? "Windows BAK: 部分コピー・読み取り専用（元形式にSHA-256照合なし）":"")
         status=recovery ? "全領域を読み取り専用で復旧走査しています…":"映像を読み込まずに録画索引を取得しています…"
         Task {
             do {
