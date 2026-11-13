@@ -102,16 +102,61 @@ final class ScanCancellation: @unchecked Sendable {
             result["window_number"] = window?.windowNumber ?? -1
             result["process_id"] = ProcessInfo.processInfo.processIdentifier
             if let snapshot, let view=window?.contentView {
-                view.layoutSubtreeIfNeeded();view.displayIfNeeded()
-                guard let rep=view.bitmapImageRepForCachingDisplay(in:view.bounds) else { throw BrowserError.io("GUI画像を作成できません") }
-                view.cacheDisplay(in:view.bounds,to:rep)
-                guard let data=rep.representation(using:.png,properties:[:]) else { throw BrowserError.io("GUI画像を保存できません") }
-                try data.write(to:URL(fileURLWithPath:snapshot));result["own_window_snapshot_saved"] = true
+                try captureOwnView(view,to:URL(fileURLWithPath:snapshot));result["own_window_snapshot_saved"] = true
+            }
+            if CommandLine.arguments.contains("--ui-check-extra") {
+                try await checkAdditionalFeatures(result:&result,folder:report.deletingLastPathComponent())
             }
             result["passed"] = true
         } catch { result["passed"] = false;result["error"] = error.localizedDescription }
         if let data=try? JSONSerialization.data(withJSONObject:result,options:[.prettyPrinted,.sortedKeys]) { try? data.write(to:report) }
         if !CommandLine.arguments.contains("--ui-check-keep-open") { NSApp.terminate(nil) }
+    }
+    private func captureOwnView(_ view:NSView,to url:URL) throws {
+        view.layoutSubtreeIfNeeded();view.displayIfNeeded()
+        guard let rep=view.bitmapImageRepForCachingDisplay(in:view.bounds) else{throw BrowserError.io("GUI画像を作成できません")}
+        view.cacheDisplay(in:view.bounds,to:rep)
+        guard let data=rep.representation(using:.png,properties:[:]) else{throw BrowserError.io("GUI画像を保存できません")}
+        try data.write(to:url)
+    }
+    private func checkAdditionalFeatures(result:inout [String:Any],folder:URL) async throws {
+        guard let r=model.recording,let clock=model.packet?.telemetry.clock,let zone=TimeZone(identifier:"Asia/Tokyo"),let date=clock.date(in:zone) else{throw BrowserError.io("追加GUI検証の録画時刻がありません")}
+        let oldQuery=model.rawQuery
+        var query=RawSensorQuery();query.enabled=true;query.eventByte=Int(r.packets[0].telemetry.eventRaw);model.rawQuery=query
+        guard model.rawQueryResults[r.id]==true,model.filteredRecordings.contains(where:{$0.id==r.id}) else{throw BrowserError.io("raw一致検索で録画を確認できません")}
+        let used=Set(r.packets.map{Int($0.telemetry.eventRaw)})
+        if let absent=(0...255).first(where:{!used.contains($0)}) {
+            query.eventByte=absent;model.rawQuery=query
+            guard model.rawQueryResults[r.id]==false,!model.filteredRecordings.contains(where:{$0.id==r.id}) else{throw BrowserError.io("raw不一致検索が録画を除外しません")}
+        }
+        model.rawQuery=oldQuery;result["raw_filter_matches_and_excludes"]=true
+        let oldTrack=model.externalGPSTrack,oldZone=model.deviceTimeZoneID,oldOffset=model.gpsLogOffset,oldUse=model.useExternalGPS
+        model.externalGPSTrack=ExternalGPSTrack(points:[.init(id:0,latitude:35.1,longitude:139.2,speedKMH:12,timestamp:date)])
+        model.useExternalGPS=true;model.deviceTimeZoneID=""
+        guard model.coordinate==nil else{throw BrowserError.io("未指定タイムゾーンで外部GPSが同期しました")}
+        model.deviceTimeZoneID="Asia/Tokyo";model.gpsLogOffset=0
+        guard let fix=model.coordinate,abs(fix.latitude-35.1)<1e-8,abs(fix.longitude-139.2)<1e-8,model.currentSpeedKMH==12 else{throw BrowserError.io("明示外部GPS同期を確認できません")}
+        model.gpsLogOffset=100
+        guard model.coordinate==nil else{throw BrowserError.io("外部GPSの範囲外を補外してしまいました")}
+        model.externalGPSTrack=oldTrack;model.deviceTimeZoneID=oldZone;model.gpsLogOffset=oldOffset;model.useExternalGPS=oldUse
+        result["external_gps_explicit_opt_in_and_no_extrapolation"]=true
+        model.settingsTab=2;model.showSettings=true
+        for _ in 0..<30{if window?.attachedSheet != nil{break};try await Task.sleep(nanoseconds:100_000_000)}
+        guard let sheet=window?.attachedSheet,let view=sheet.contentView else{throw BrowserError.io("設定シートを表示できません")}
+        for (tab,name) in [(2,"export"),(1,"gps"),(3,"raw-search")] {
+            model.settingsTab=tab;try await Task.sleep(nanoseconds:400_000_000)
+            try captureOwnView(view,to:folder.appendingPathComponent("settings-\(name).png"))
+        }
+        model.showSettings=false;try await Task.sleep(nanoseconds:400_000_000)
+        let notes=model.reportNotes();model.saveReportNotes("GUI checkpoint — raw semantics remain unclassified")
+        guard model.reportNotes()=="GUI checkpoint — raw semantics remain unclassified" else{throw BrowserError.io("レポート備考を保存できません")}
+        model.saveReportNotes(notes);model.showReport=true
+        for _ in 0..<30{if window?.attachedSheet != nil{break};try await Task.sleep(nanoseconds:100_000_000)}
+        try await Task.sleep(nanoseconds:600_000_000)
+        guard let reportView=window?.attachedSheet?.contentView else{throw BrowserError.io("録画レポートを表示できません")}
+        try captureOwnView(reportView,to:folder.appendingPathComponent("recording-report.png"))
+        model.showReport=false;try await Task.sleep(nanoseconds:300_000_000)
+        result["settings_and_report_views_captured"]=true;result["report_notes_local_roundtrip"]=true
     }
     @objc func openImage() { model.openPanel() }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }

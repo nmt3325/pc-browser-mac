@@ -26,13 +26,16 @@ enum InspectionCLI {
             }}
             let catalogued=ProcessInfo.processInfo.systemUptime
             let estimatedFrames=result.frameCount,summaryBlocks=result.blockCount
-            let mediaRequested = !args.contains("--catalog-only") && (args.contains("--decode-check") || args.contains("--features-check") || value("--export-prefix",in:args) != nil || value("--movie",in:args) != nil || value("--avi",in:args) != nil || value("--print-pdf",in:args) != nil || value("--sequence-dir",in:args) != nil)
+            let rawQueryRequested=args.contains("--raw-query"),reportPrefix=value("--recording-report-prefix",in:args),reportPDF=value("--recording-report-pdf",in:args)
+            let detailRequested=rawQueryRequested || reportPrefix != nil || reportPDF != nil
+            let loadAll=args.contains("--load-all") || rawQueryRequested
+            let mediaRequested = !args.contains("--catalog-only") && (args.contains("--decode-check") || args.contains("--features-check") || value("--export-prefix",in:args) != nil || value("--movie",in:args) != nil || value("--avi",in:args) != nil || value("--print-pdf",in:args) != nil || value("--sequence-dir",in:args) != nil || reportPDF != nil)
             let maximum=value("--max-decode",in:args).flatMap(Int.init) ?? 180
             guard maximum>=0 else{throw BrowserError.invalid("--max-decode は0以上です（0=全フレーム）")}
-            if mediaRequested || args.contains("--load-all") {
+            if mediaRequested || detailRequested || loadAll {
                 var budget=0
                 for i in result.recordings.indices {
-                    if !args.contains("--load-all"),i>0,(!args.contains("--decode-check") || maximum>0 && budget>=maximum) {break}
+                    if !loadAll,i>0,(!args.contains("--decode-check") || maximum>0 && budget>=maximum) {break}
                     result.recordings[i]=try CatalogScanner.loadRecording(result.recordings[i],source:source)
                     budget += result.recordings[i].packets.count
                 }
@@ -54,6 +57,31 @@ enum InspectionCLI {
             }
             if args.contains("--headers-fixture") {report["source_scope"]="Header-only structural fixture; no H.264/PCM payload, not a complete acquired disk image"}
             report["archive_sha256_verified"] = (source as? ArchiveSource)?.isHashVerified ?? false
+            if let path=value("--copy-image",in:args) {
+                let summary=try ImageCopy.write(source:source,to:URL(fileURLWithPath:path))
+                report["image_copy"]=try JSONSerialization.jsonObject(with:JSONEncoder().encode(summary))
+            }
+            if rawQueryRequested {
+                func integer(_ flag:String,_ fallback:Int,_ range:ClosedRange<Int>) throws ->Int {
+                    guard let text=value(flag,in:args) else{return fallback}
+                    guard let number=Int(text),range.contains(number) else{throw BrowserError.invalid("\(flag) の範囲が不正です")}
+                    return number
+                }
+                var query=RawSensorQuery();query.enabled=true
+                query.accelerationAxis=try integer("--raw-accel-axis",0,0...2);query.gyroAxis=try integer("--raw-gyro-axis",2,0...2)
+                query.minimumAbsoluteAcceleration=try integer("--raw-accel-min",0,0...32768);query.minimumAbsoluteGyro=try integer("--raw-gyro-min",0,0...32768)
+                query.eventByte=try integer("--raw-event",-1,-1...255);query.inputIndex=try integer("--raw-input-index",-1,-1...5);query.inputValue=try integer("--raw-input-value",0,0...255)
+                report["raw_query"]=["scope":"Explicit header-only detail search; all conditions must match the same frame; no physical units or trigger names inferred",
+                    "recording_ids":result.recordings.filter{$0.packets.contains(where:query.matches)}.map(\.id),
+                    "matching_frames":result.recordings.reduce(0){$0+$1.packets.filter(query.matches).count}] as [String:Any]
+            }
+            if let prefix=reportPrefix {
+                let notes=value("--report-notes",in:args) ?? "", reports=try result.recordings.filter(\.isLoaded).map{try RecordingReport.make($0,notes:notes)}
+                let encoder=JSONEncoder();encoder.outputFormatting=[.prettyPrinted,.sortedKeys]
+                try encoder.encode(reports).write(to:URL(fileURLWithPath:prefix+".json"),options:.withoutOverwriting)
+                try Data(RecordingReport.csv(reports).utf8).write(to:URL(fileURLWithPath:prefix+".csv"),options:.withoutOverwriting)
+                report["recording_reports"]=reports.count
+            }
             var firstImage:CGImage?,decoded=0,width=0,height=0
             if mediaRequested {
                 for recording in result.recordings where recording.isLoaded {
@@ -143,6 +171,13 @@ enum InspectionCLI {
                 guard start>=0,start<recording.packets.count,count>0 else{throw BrowserError.invalid("出力のテスト範囲が不正です")}
                 let end=start+min(count,recording.packets.count-start),range=start..<end
                 var settings=ProjectionSettings();settings.mode=value("--projection",in:args).flatMap(ProjectionMode.init(rawValue:)) ?? .perspective;settings.night=args.contains("--night")
+                if let path=reportPDF {
+                    let summary=try RecordingReport.make(recording,notes:value("--report-notes",in:args) ?? "")
+                    let focus=value("--report-focus-frame",in:args).flatMap(Int.init) ?? recording.packets.count/2
+                    try await ReportExport.pdf(report:summary,source:source,recording:recording,currentFrame:focus,projection:settings,to:URL(fileURLWithPath:path))
+                    report["recording_report_pdf"]=path
+                    report["report_reference_frames"]=ReportExport.referenceFrames(recording:recording,currentFrame:focus)
+                }
                 if let avi=value("--avi",in:args) {
                     var options=MovieExportOptions(frames:range);options.projection=settings;options.subtitles=args.contains("--subtitles");options.subtitleFields=args.contains("--subtitle-all") ? .all:.defaults
                     options.externalGPS=externalGPS;options.audio = !args.contains("--no-audio");options.width=1280
