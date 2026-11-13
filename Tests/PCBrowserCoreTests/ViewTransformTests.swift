@@ -219,4 +219,31 @@ final class ViewTransformTests: XCTestCase {
             if (570...576).contains(id) || id == 2 || id == 501 || id == 510 || id == 511 || id == 516 { XCTAssertEqual(command.status, .implemented, "\(id)") }
         }
     }
+
+    func testOperationScriptMatchesManualOperations() throws {
+        var manual = ViewTransform()
+        manual.flipHorizontal()
+        manual.rotateClockwise(90)
+        manual.setZoom(2)
+        XCTAssertEqual(try ViewOperationScript.transform(from: "flipH,cw:90,zoom:2"), manual)
+        XCTAssertEqual(try ViewOperationScript.transform(from: " flipH , cw:90 ,, zoom:2 "), manual)
+        var turned = ViewTransform()
+        turned.flipVertical()
+        turned.rotateCounterClockwise(30)
+        turned.zoomIn()
+        turned.zoomOut()
+        XCTAssertEqual(try ViewOperationScript.transform(from: "flipV,ccw:30,zoomIn,zoomOut"), turned)
+        XCTAssertTrue(try ViewOperationScript.transform(from: "").isIdentity)
+        XCTAssertTrue(try ViewOperationScript.transform(from: "flipH,cw:45,zoom:3,reset").isIdentity)
+        XCTAssertEqual(try ViewOperationScript.transform(from: "cw:１２０").angleDegrees, 120, "full-width digits are accepted like the original prompt")
+    }
+
+    func testOperationScriptRejectsInvalidInput() {
+        for text in ["cw:0", "cw:360", "ccw:-5", "cw:", "cw:abc", "cw", "zoom:0.5", "zoom:9", "zoom:nan", "zoom", "flipH:1", "spin", ":", "flipX"] {
+            XCTAssertThrowsError(try ViewOperationScript.transform(from: text), text)
+        }
+        XCTAssertThrowsError(try ViewOperationScript.transform(from: "cw:0")) { error in
+            XCTAssertEqual((error as? BrowserError), .invalid(ViewTransform.angleErrorMessage))
+        }
+    }
 }

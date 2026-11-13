@@ -104,6 +104,11 @@ enum InspectionCLI {
                 try Data(RecordingReport.csv(reports).utf8).write(to:URL(fileURLWithPath:prefix+".csv"),options:.withoutOverwriting)
                 report["recording_reports"]=reports.count
             }
+            var viewTransform=ViewTransform()
+            if let script=value("--view-ops",in:args) {
+                viewTransform=try ViewOperationScript.transform(from:script)
+                report["view_ops"]=["script":script,"state":viewTransform.stateLabel,"zoom":viewTransform.zoom,"mirrored":viewTransform.mirrored,"rotation":viewTransform.rotation] as [String:Any]
+            }
             var firstImage:CGImage?,decoded=0,width=0,height=0
             if mediaRequested {
                 for recording in result.recordings where recording.isLoaded {
@@ -117,7 +122,13 @@ enum InspectionCLI {
                     }
                 }
                 report["native_videotoolbox_decoded_frames"]=decoded;report["width"]=width;report["height"]=height
-                if let png=value("--png",in:args),let image=firstImage {try MediaExport.still(image,to:URL(fileURLWithPath:png))}
+                if let png=value("--png",in:args),var image=firstImage {
+                    if !viewTransform.isIdentity {
+                        guard let rendered=ViewTransformRenderer.apply(image,viewTransform) else{throw BrowserError.io("画面操作を適用できません")}
+                        image=rendered
+                    }
+                    try MediaExport.still(image,to:URL(fileURLWithPath:png))
+                }
             }
             if mediaRequested,args.contains("--features-check"),let recording=result.recordings.first {
                 let timeline=RecordingTimeline(packets:recording.packets)
@@ -138,7 +149,7 @@ enum InspectionCLI {
                 try FileManager.default.createDirectory(at:folder,withIntermediateDirectories:true)
                 let projection=try NativeProjection();var modes:[String:[String:Int]]=[:]
                 for mode in ProjectionMode.allCases {
-                    var s=ProjectionSettings();s.mode=mode;s.night=args.contains("--night")
+                    var s=ProjectionSettings();s.mode=mode;s.night=args.contains("--night");s.view=viewTransform
                     let rendered=try projection.render(image,settings:s,width:960)
                     try MediaExport.still(rendered,to:URL(fileURLWithPath:prefix+"-"+mode.rawValue+".png"))
                     modes[mode.rawValue]=["width":rendered.width,"height":rendered.height]
