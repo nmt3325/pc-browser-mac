@@ -96,6 +96,10 @@ public enum SourceOpener {
     public static func open(_ url: URL, verifyArchiveHash: Bool = true) throws -> any ByteSource {
         var directory: ObjCBool = false
         if FileManager.default.fileExists(atPath: url.path, isDirectory: &directory), directory.boolValue {
+            if !FileManager.default.fileExists(atPath: url.appendingPathComponent("manifest.json").path) {
+                let parts = try WindowsBackupFolder.resolve(url)
+                if !parts.isEmpty { return try WindowsBackupSet(urls:parts) }
+            }
             return try ArchiveSource(url:url,verifyHash:verifyArchiveHash)
         }
         let file = try FileByteSource(url: url)
@@ -112,12 +116,16 @@ public enum ArchiveWriter {
             throw BrowserError.invalid("空の選択または既存の出力先にはバックアップできません")
         }
         var ranges: [Range<UInt64>] = [0..<512, (index.control.sector*512)..<((index.control.sector+2)*512)]
+        // Mirror pair of the recording partition, so the archive can later be written as a genuine-layout BAK.
+        for r in try WindowsBackupLayout.fixedSectors(source:source,control:index.control.sector) { ranges.append((r.lowerBound*512)..<(r.upperBound*512)) }
         for r in recordings {
             guard r.isLoaded, !r.packets.isEmpty else { throw BrowserError.invalid("バックアップ前に選択録画の索引を読み込んでください") }
             for record in Set(r.packets.map(\.recordSector)) {
                 ranges.append((UInt64(record)*512)..<((UInt64(record)+2)*512))
             }
             for p in r.packets { ranges.append((p.headerSector*512)..<((p.trailerSector+1)*512)) }
+            // Block header and trailer pairs next to the packets (D103/D105 ... D106/D104) belong to the block.
+            for chunk in try WindowsBackupLayout.chunks(for:r,source:source) { ranges.append((chunk.sectors.lowerBound*512)..<(chunk.sectors.upperBound*512)) }
         }
         ranges.sort { $0.lowerBound < $1.lowerBound }
         var merged: [Range<UInt64>] = []

@@ -47,7 +47,7 @@ enum InspectionCLI {
             let estimatedFrames=result.frameCount,summaryBlocks=result.blockCount
             let rawQueryRequested=args.contains("--raw-query"),reportPrefix=value("--recording-report-prefix",in:args),reportPDF=value("--recording-report-pdf",in:args)
             let detailRequested=rawQueryRequested || reportPrefix != nil || reportPDF != nil
-            let loadAll=args.contains("--load-all") || rawQueryRequested
+            let loadAll=args.contains("--load-all") || rawQueryRequested || args.contains("--bak-write")
             let mediaRequested = !args.contains("--catalog-only") && (args.contains("--decode-check") || args.contains("--features-check") || value("--export-prefix",in:args) != nil || value("--movie",in:args) != nil || value("--avi",in:args) != nil || value("--print-pdf",in:args) != nil || value("--sequence-dir",in:args) != nil || reportPDF != nil)
             let maximum=value("--max-decode",in:args).flatMap(Int.init) ?? 180
             guard maximum>=0 else{throw BrowserError.invalid("--max-decode は0以上です（0=全フレーム）")}
@@ -78,6 +78,43 @@ enum InspectionCLI {
             report["archive_sha256_verified"] = (source as? ArchiveSource)?.isHashVerified ?? false
             if let bak=source as? WindowsBackupSource {
                 report["windows_backup"]=["format":"BDRBACKUP___","parts":1,"extents":bak.extents.count,"stored_bytes":bak.storedByteCount,"header_stored_bytes":bak.headerStoredBytes,"xor_key_index":Int(bak.keyIndex),"partial_copy":true,"cryptographic_integrity_available":false,"scope":"Read-only single-part BAK; source_bytes is an addressable virtual span, not original disk capacity"] as [String:Any]
+            }
+            if let set=source as? WindowsBackupSet {
+                report["windows_backup"]=["format":"BDRBACKUP___","parts":set.parts.count,"part_files":set.partNames,"extents":set.extentCount,"stored_bytes":set.storedByteCount,
+                    "xor_key_indexes":Array(Set(set.parts.map{Int($0.keyIndex)})).sorted(),"created":set.parts.first.map{$0.created.map(Int.init)} ?? [],"partial_copy":true,"cryptographic_integrity_available":false,
+                    "scope":"Read-only multi-part BAK folder merged by source offset; overlaps verified byte-identical; source_bytes is an addressable virtual span, not original disk capacity"] as [String:Any]
+            }
+            if let dir=value("--bak-write",in:args) {
+                var options=WindowsBackupOptions()
+                if let v=value("--bak-key-index",in:args) {guard let k=UInt8(v) else{throw BrowserError.invalid("--bak-key-index は0〜255です")};options.keyIndex=k}
+                if let v=value("--bak-max-part-bytes",in:args) {guard let n=UInt64(v) else{throw BrowserError.invalid("--bak-max-part-bytes が不正です")};options.maxChunkBytesPerPart=n}
+                if let v=value("--bak-max-chunks",in:args) {guard let n=Int(v),n >= 1 else{throw BrowserError.invalid("--bak-max-chunks は1以上です")};options.maxChunksPerPart=n}
+                if let v=value("--bak-created",in:args) {
+                    let zone=value("--bak-time-zone",in:args).flatMap(TimeZone.init(identifier:)) ?? TimeZone.current
+                    let f=DateFormatter();f.locale=Locale(identifier:"en_US_POSIX");f.timeZone=zone;f.dateFormat="yyyyMMdd_HHmmss"
+                    guard let date=f.date(from:v) else{throw BrowserError.invalid("--bak-created は yyyyMMdd_HHmmss 形式です")}
+                    options.created=date;options.timeZone=zone
+                }
+                var chosen=result.recordings.filter(\.isLoaded)
+                if let list=value("--bak-select",in:args) {
+                    let numbers=list.split(separator:",").compactMap{Int($0)}
+                    chosen=numbers.compactMap{$0 >= 1 && $0 <= result.recordings.count ? result.recordings[$0-1]:nil}
+                }
+                guard !chosen.isEmpty else{throw BrowserError.invalid("バックアップする録画がありません")}
+                let plan=try WindowsBackupWriter.plan(source:source,index:result,recordings:chosen,options:options)
+                let folder=try WindowsBackupWriter.write(source:source,plan:plan,options:options,to:URL(fileURLWithPath:dir,isDirectory:true),protecting:[url])
+                var info:[String:Any]=["folder":folder.lastPathComponent,"parts":plan.parts.count,"part_files":plan.parts.map(\.fileName),
+                    "chunks":plan.parts.reduce(0){$0+$1.chunks.count},"chunk_packets":plan.parts.map{$0.chunks.map(\.packets).reduce(0,+)},"bytes":plan.totalBytes,
+                    "trailer_pairs":plan.parts.reduce(0){$0+$1.chunks.filter(\.hasTrailerPair).count},"header_pairs":plan.parts.reduce(0){$0+$1.chunks.filter(\.hasHeaderPair).count},
+                    "mirror_pair_included":plan.fixedSectors.count > 3]
+                if args.contains("--bak-verify") {
+                    let check=try WindowsBackupWriter.verify(source:source,plan:plan,folder:folder),reopened=try SourceOpener.open(folder),rescan=try CatalogScanner.scan(reopened)
+                    info["verified_bytes"]=check.bytes;info["verified_extents"]=check.extents
+                    info["reopened_recordings"]=rescan.recordings.count;info["reopened_frames"]=rescan.frameCount
+                    info["expected_frames"]=chosen.reduce(0){$0+$1.packets.count}
+                    info["reopened_matches"]=rescan.frameCount == chosen.reduce(0){$0+$1.packets.count} && rescan.recordings.count == chosen.count
+                }
+                report["bak_write"]=info
             }
             if let path=value("--copy-image",in:args) {
                 let summary=try ImageCopy.write(source:source,to:URL(fileURLWithPath:path))

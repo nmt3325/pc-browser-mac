@@ -50,12 +50,44 @@ extension BrowserModel {
         }
     }
     func backup() {
+        guard source != nil,index != nil,!selectedRecordings.isEmpty else{return}
+        let alert=NSAlert();alert.messageText="バックアップの形式を選択"
+        alert.informativeText="PC Browserタイプ（BAK）: 純正PC Browserのバックアップと同じ形式（BDRBACKUP___）のフォルダーを作ります。\nMacコンパクト形式: SHA-256照合つきの.pcbbackupを作ります。\nどちらも新しい出力先へ書き出し、元のSDカード・IMGには書き込みません。"
+        alert.addButton(withTitle:"PC Browserタイプ（BAK）");alert.addButton(withTitle:"Macコンパクト形式（.pcbbackup）");alert.addButton(withTitle:"キャンセル")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:backupWindowsType()
+        case .alertSecondButtonReturn:backupCompact()
+        default:return
+        }
+    }
+    func backupCompact() {
         guard let source,let index,!selectedRecordings.isEmpty,let u=destination("PCBrowser-selected",extension:"pcbbackup") else{return}
         let records=selectedRecordings,name=sourceName
         performExport("選択録画のバックアップ"){flag,progress in
             var loaded:[Recording]=[]
             for (i,r) in records.enumerated(){loaded.append(try CatalogScanner.loadRecording(r,source:source,cancelled:{flag.cancelled}));progress(Double(i+1)/Double(records.count)*0.1)}
             try ArchiveWriter.write(source:source,index:index,recordings:loaded,name:name,to:u,cancelled:{flag.cancelled},progress:{progress(0.1+$0*0.9)})
+        }
+    }
+    /// Writes `<chosen folder>/<yyyyMMdd_HHmmss>/<counter>_<yyyyMMdd>_<HHmmss>.bak` parts (BDRBACKUP___) like PC Browser 1.9.60.0.
+    func backupWindowsType() {
+        guard let source,let index else{return}
+        let panel=NSOpenPanel();panel.canChooseDirectories=true;panel.canChooseFiles=false;panel.canCreateDirectories=true
+        panel.title="PC Browserタイプ（BAK）の保存先";panel.message="選んだフォルダーの中に、日時名のフォルダー（例: 20261113_223419）を作成します";panel.prompt="保存"
+        if let documents=FileManager.default.urls(for:.documentDirectory,in:.userDomainMask).first {
+            let preferred=documents.appendingPathComponent("Yupiteru/PC Browser",isDirectory:true)
+            panel.directoryURL=FileManager.default.fileExists(atPath:preferred.path) ? preferred:documents
+        }
+        guard panel.runModal() == .OK,let parent=panel.url else{return}
+        let records=selectedRecordings,protected=[sourceURL].compactMap{$0}
+        performExport("PC Browserタイプ（BAK）バックアップ"){flag,progress in
+            var loaded:[Recording]=[]
+            for (i,r) in records.enumerated(){loaded.append(try CatalogScanner.loadRecording(r,source:source,cancelled:{flag.cancelled}));progress(Double(i+1)/Double(records.count)*0.05)}
+            let options=WindowsBackupOptions()
+            let plan=try WindowsBackupWriter.plan(source:source,index:index,recordings:loaded,options:options)
+            let folder=try WindowsBackupWriter.write(source:source,plan:plan,options:options,to:parent,protecting:protected,cancelled:{flag.cancelled},progress:{progress(0.05+$0*0.85)})
+            _ = try WindowsBackupWriter.verify(source:source,plan:plan,folder:folder,cancelled:{flag.cancelled})
+            progress(1)
         }
     }
     func exportSequence() {
