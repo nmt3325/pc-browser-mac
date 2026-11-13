@@ -6,6 +6,6 @@ let package = Package(
     targets: [
         .target(name: "PCRawIO", publicHeadersPath: "include", linkerSettings: [.linkedFramework("DiskArbitration"), .linkedFramework("CoreFoundation")]),
         .target(name: "PCBrowserCore"),
-        .executableTarget(name: "PCBrowserMac", dependencies: ["PCBrowserCore", "PCRawIO"], linkerSettings: [.linkedFramework("AppKit"), .linkedFramework("AVKit"), .linkedFramework("MapKit"), .linkedFramework("VideoToolbox"), .linkedFramework("Metal"), .linkedFramework("MetalKit"), .linkedFramework("AVFoundation"), .linkedFramework("CoreText")]),
+        .executableTarget(name: "PCBrowserMac", dependencies: ["PCBrowserCore", "PCRawIO"], linkerSettings: [.linkedFramework("AppKit"), .linkedFramework("AVKit"), .linkedFramework("MapKit"), .linkedFramework("VideoToolbox"), .linkedFramework("Metal"), .linkedFramework("MetalKit"), .linkedFramework("AVFoundation"), .linkedFramework("CoreText"), .linkedFramework("PDFKit")]),
         .testTarget(name: "PCBrowserCoreTests", dependencies: ["PCBrowserCore"])
     ])
