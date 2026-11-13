@@ -10,6 +10,8 @@ public final class WindowsBackupSource: ByteSource, @unchecked Sendable {
     public let extents: [ArchiveSegment]
     public let keyIndex: UInt8
     public let headerStoredBytes: UInt64
+    /// Header bytes 16...21: yy mm dd HH MM SS of the backup run (local time of the PC that wrote it).
+    public let created: [UInt8]
     public var storedByteCount: UInt64 { storage.byteCount }
     public var isPartialCopy: Bool { true }
     public var scanRanges: [Range<UInt64>]? { extents.map { $0.sourceOffset..<($0.sourceOffset+$0.length) } }
@@ -42,6 +44,7 @@ public final class WindowsBackupSource: ByteSource, @unchecked Sendable {
         guard header.prefix(12) == Self.magic else { throw BrowserError.invalid("BDRBACKUP___の署名がありません") }
         guard try b.le32(12) == 1 else { throw BrowserError.unsupported("このBAKヘッダー形式には対応していません") }
         let keyIndex = try b.u8(22), key = Self.xorTable[Int(keyIndex)]
+        let createdBytes = Array(header.dropFirst(16).prefix(6))
         let n = try Self.le64(header, 24)
         guard n > 0, n <= 262144 else { throw BrowserError.invalid("BAKのセグメント数が不正または上限を超えています") }
         let tableEnd = 48+n*32
@@ -84,13 +87,14 @@ public final class WindowsBackupSource: ByteSource, @unchecked Sendable {
         _ = try PartitionTable.parse(mbr,diskBytes:virtualEnd)
         self.storage=storage;self.byteCount=virtualEnd;self.extents=extents;self.keyIndex=keyIndex;self.xorByte=key
         self.headerStoredBytes=try Self.le64(header,32)
+        self.created=createdBytes
     }
     private static func le64(_ d:Data,_ o:Int) throws -> UInt64 {
         let b=Bytes(d);var v:UInt64=0
         for i in 0..<8 { v |= UInt64(try b.u8(o+i)) << (i*8) };return v
     }
     private static func transform(_ data:Data,key:UInt8) -> Data {
-        key==0 ? data:Data(data.map { $0 ^ key })
+        BackupXOR.applied(data,key:key)
     }
     public func read(at offset: UInt64, count: Int) throws -> Data {
         guard count>=0,count<=64*1024*1024,offset<=byteCount,UInt64(count)<=byteCount-offset else { throw BrowserError.truncated("BAKの読み取り範囲が不正です") }
@@ -108,5 +112,31 @@ public final class WindowsBackupSource: ByteSource, @unchecked Sendable {
             out.replaceSubrange(Int(lo-offset)..<Int(hi-offset),with:data)
         }
         return out
+    }
+}
+
+
+/// Fixed single-byte XOR used for every stored byte of a BDRBACKUP___ file (table and data).
+/// This is obfuscation recovered from the original program, never authentication.
+public enum BackupXOR {
+    public static func apply(_ data: inout Data, key: UInt8) {
+        guard key != 0, !data.isEmpty else { return }
+        let word = UInt64(key) &* 0x0101010101010101
+        data.withUnsafeMutableBytes { raw in
+            let n = raw.count
+            var i = 0
+            while i+8 <= n {
+                let v = raw.loadUnaligned(fromByteOffset:i,as:UInt64.self) ^ word
+                raw.storeBytes(of:v,toByteOffset:i,as:UInt64.self)
+                i += 8
+            }
+            while i < n { raw[i] ^= key; i += 1 }
+        }
+    }
+    public static func applied(_ data: Data, key: UInt8) -> Data {
+        guard key != 0 else { return data }
+        var copy = data
+        apply(&copy,key:key)
+        return copy
     }
 }

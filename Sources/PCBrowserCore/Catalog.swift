@@ -74,19 +74,46 @@ public struct RecordingStatistics: Sendable {
 /// Groups verified session references, not merely timestamps which happen to be close.
 /// Unreferenced/recovery fragments stay separate rather than being assigned a guessed boot.
 public enum RecordingSessions {
-    public static func group(_ blocks: [RecordBlock]) -> [Recording] {
-        var groups: [String:[RecordBlock]] = [:]
+    static func sessionKey(_ m: RecordMetadata, channel: UInt8) -> String {
+        "session-\(m.sessionSector)-\(m.sessionSerial)-\(channel)-\(m.formatKey)"
+    }
+    /// `previous[key]` is the previous-packet pointer of a block's first packet. `adoptable` lists blocks
+    /// whose header pair is absent or overwritten (not a D103/D105 sector at all): when the intact packet
+    /// chain leads from such a block into a block with metadata, it is the beginning of that recording
+    /// (a ring wrap overwrote its first sectors), exactly as the original keeps it in the recording's backup.
+    /// A header that is present but names another record stays an unassigned fragment.
+    public static func group(_ blocks: [RecordBlock], previous: [String:UInt64] = [:], adoptable: Set<String> = []) -> [Recording] {
+        var follower: [UInt64:RecordBlock] = [:]
+        if !adoptable.isEmpty {
+            for b in blocks.sorted(by:{ $0.first.headerSector < $1.first.headerSector }) {
+                if let p = previous[b.key], p > 0, follower[p] == nil { follower[p] = b }
+            }
+        }
+        func adoptedRoot(_ block: RecordBlock) -> (RecordBlock,Int)? {
+            var current = block, hops = 0
+            while hops < 8 {
+                guard let next = follower[current.last.headerSector], next.channel == block.channel, next.key != current.key else { return nil }
+                hops += 1
+                if next.metadata != nil { return (next,hops) }
+                guard adoptable.contains(next.key) else { return nil }
+                current = next
+            }
+            return nil
+        }
+        var groups: [String:[RecordBlock]] = [:], order: [String:Double] = [:]
         for b in blocks {
             let key: String
             if let m = b.metadata {
-                key = "session-\(m.sessionSector)-\(m.sessionSerial)-\(b.channel)-\(m.formatKey)"
+                key = sessionKey(m,channel:b.channel); order[b.key] = Double(m.frameOffset)
+            } else if adoptable.contains(b.key), let (root,hops) = adoptedRoot(b), let m = root.metadata {
+                key = sessionKey(m,channel:b.channel); order[b.key] = Double(m.frameOffset)-Double(hops)*0.001
             } else { key = "fragment-\(b.key)" }
             groups[key,default:[]].append(b)
         }
         var result: [Recording] = []
         for (key,parts) in groups {
             let ordered = parts.sorted { a,b in
-                if let x = a.metadata, let y = b.metadata, x.frameOffset != y.frameOffset { return x.frameOffset < y.frameOffset }
+                if let x = order[a.key], let y = order[b.key], x != y { return x < y }
                 if a.first.cardTime != b.first.cardTime { return a.first.cardTime < b.first.cardTime }
                 return a.first.headerSector < b.first.headerSector
             }
@@ -189,6 +216,7 @@ public enum CatalogScanner {
         // all intermediate frames cannot change the catalog and made long lists slow.
         // No video/PCM is buffered and no on-disk cache is created.
         var pendingLast: [String:(sector:UInt64,header:Data)] = [:], boundaryParses = 0
+        var firstPrevious: [String:UInt64] = [:], headerAbsent: [UInt32:Bool] = [:]
         var lastPublished = Date.timeIntervalSinceReferenceDate
         func packet(_ h:Data, sector:UInt64) throws -> FramePacket {
             boundaryParses += 1
@@ -204,7 +232,17 @@ public enum CatalogScanner {
                                     metadata:old.metadata,frameCount:old.frameCount,countIsEstimate:old.countIsEstimate)
             }
             pendingLast.removeAll(keepingCapacity:true)
-            return ImageIndex(control:control,recordings:RecordingSessions.group(Array(blocks.values)),scannedBytes:source.bytes,
+            // Only blocks without metadata need a header check; the verdict is cached per record sector.
+            var adoptable = Set<String>()
+            for (key,block) in blocks where block.metadata == nil {
+                let sector = block.recordSector
+                if headerAbsent[sector] == nil {
+                    let magic = present(UInt64(sector)) ? ((try? Bytes(source.read(at:UInt64(sector)*512,count:4)).le32(0)) ?? 0) : 0
+                    headerAbsent[sector] = magic != 0xFFFFD103 && magic != 0xFFFFD105
+                }
+                if headerAbsent[sector] == true { adoptable.insert(key) }
+            }
+            return ImageIndex(control:control,recordings:RecordingSessions.group(Array(blocks.values),previous:firstPrevious,adoptable:adoptable),scannedBytes:source.bytes,
                        isPartialScan:limitBytes != nil && end < diskEnd || source.isPartialCopy,rejectedCandidates:rejected,
                        isMetadataCatalog:true,recoveryRecommended:recovery,catalogReadCalls:source.calls,
                        catalogBoundaryParses:boundaryParses,backlinkBlocks:backward)
@@ -230,7 +268,7 @@ public enum CatalogScanner {
                 let block = RecordBlock(recordSector:lastRef.record,channel:lastRef.channel,first:first,last:last,
                                         metadata:m,frameCount:Int(lastRef.sequence)+1,countIsEstimate:true)
                 if blocks[block.key] != nil { break }
-                blocks[block.key] = block; skippable[UInt64(block.recordSector)] = block; backward += 1; cursor = firstRef.previous
+                blocks[block.key] = block; firstPrevious[block.key] = firstRef.previous; skippable[UInt64(block.recordSector)] = block; backward += 1; cursor = firstRef.previous
                 try publish(backward == 1 ? 0.01:0.05,force:backward == 1)
             }
         }
@@ -263,6 +301,7 @@ public enum CatalogScanner {
                         } else if existing == nil {
                             let p = try packet(h,sector:sector)
                             blocks[key] = .init(recordSector:ref.record,channel:ref.channel,first:p,last:p,metadata:m,frameCount:1,countIsEstimate:false)
+                            firstPrevious[key] = ref.previous
                         }
                         sector = ref.tail+1; zeros = 0; unknown = 0
                     } catch {
