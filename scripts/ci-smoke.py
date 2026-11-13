@@ -11,6 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import pngread
+import settings_smoke
 import synthetic_media
 
 EXPECTED_MEDIA_IMAGE_SHA256 = 'd1f47ab10c5026347b8a7a4a5398a8151e034d2ecbd5586e22bb540796e9526f'
@@ -336,6 +337,8 @@ def main():
         view_report = json.loads(view_path.read_text()) if view_path.exists() else {'passed': False, 'checks': []}
         assert view_run.returncode == 0 and view_report['passed'], (view_run.stderr, [c for c in view_report['checks'] if not c['passed']])
         assert {c['name'] for c in view_report['checks']} >= {'flipHorizontal', 'flipVertical', 'rotateClockwise90', 'areaZoomTopLeft', 'zoom2PanRight'}
+        # Recording settings (記録設定) on a generated card: sector layout, checksum, region table and CONFIG command files.
+        recording_settings = settings_smoke.run(binary, root)
         media = media_smoke(binary, root, os.environ.get('PCB_ALLOW_MEDIA_UNAVAILABLE') != '1', os.environ.get('PCB_REQUIRE_GUI_CHECK') == '1',
                             os.environ.get('PCB_GUI_EVIDENCE_DIR'))
     summary = {'passed': True, 'scope': 'Generated card headers plus a generated H.264/PCM/GPS test pattern; no physical SD or private media; GUI is not exercised in CI',
@@ -345,7 +348,7 @@ def main():
                'raw_search_no_video_decode': True, 'report_csv_json': True, 'image_copy_sha256_readback': True,
                'existing_copy_and_invalid_query_refused': True, 'windows_bak_write_verify_roundtrip': True,
                'legacy_inventory_commands': inventory['commands'], 'legacy_inventory_statuses': inventory['statuses'],
-               'view_transform_pixel_checks': len(view_report['checks']), 'media': media}
+               'view_transform_pixel_checks': len(view_report['checks']), 'recording_settings': recording_settings, 'media': media}
     output.write_text(json.dumps(summary, indent=2) + '\n')
     print(json.dumps(summary))
 

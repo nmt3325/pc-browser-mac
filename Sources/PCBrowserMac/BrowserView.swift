@@ -31,12 +31,14 @@ struct BrowserView: View {
                     exportMenu.disabled(model.recording==nil || model.busy || model.scanning)
                     Button(action:model.recoveryScan){Label("復旧走査",systemImage:"externaldrive.badge.magnifyingglass")}.disabled(model.scanning || model.busy || model.source==nil).help("高速索引にない孤立データを全領域から探します（時間がかかります）")
                     Button{model.showSettings=true}label:{Label("設定",systemImage:"slider.horizontal.3")}
+                    Button{model.showRecordingSettings=true}label:{Label("記録設定",systemImage:"gearshape.2")}.help("カードのIMGから記録設定を読み出し、新しいコピーへ書き込みます")
                     Button{model.showCapabilities=true}label:{Label("対応状況",systemImage:"questionmark.circle")}
                 }
             }
         }
         .alert("確認が必要です",isPresented:Binding(get:{model.errorMessage != nil},set:{if !$0{model.errorMessage=nil}})){Button("閉じる",role:.cancel){model.errorMessage=nil}}message:{Text(model.errorMessage ?? "")}
         .sheet(isPresented:$model.showSettings){ViewerSettings(model:model)}
+        .sheet(isPresented:$model.showRecordingSettings){RecordingSettingsView(model:model,editor:model.recordingEditor)}
         .sheet(isPresented:$model.showCapabilities){CapabilitiesView()}
         .sheet(isPresented:$model.showInventory){LegacyInventoryView()}
         .onChange(of:model.fileListVisible){_,visible in columnVisibility=visible ? .all:.detailOnly}
