@@ -30,14 +30,15 @@ struct ViewerSettings:View {
                         settingSlider("元映像の拡大率",value:$model.projection.rawZoom,range:1...4)
                     }
                 }.padding(12)}.tabItem{Text("表示・360°校正")}
-                Form {
+                ScrollView { Form {
                     Picker("GPSの座標系",selection:$model.datum){ForEach(GPSDatum.allCases,id:\.self){Text($0.label).tag($0)}}
                     Text("標準は原版VA 0x56DE20から確認したTokyo→WGS84変換です。ヘッダーの緯度経度は1/600000度、速度はraw×0.036 km/hとして読み出します。").font(.caption)
                     Text("カード時刻にはタイムゾーンがないため、表示・CSVにUTCを推測して付加しません。音声形式は録画のD103/D105ヘッダーから読み取ります。").font(.caption)
                     Divider();LabeledContent("音声",value:model.audioStatus)
                     Text("G・ジャイロは符号付きraw値で表示します。機種別の物理単位換算・軸方向は未確定です。").font(.caption).foregroundStyle(.secondary)
-                    Button("外部NMEAログを開く",action:model.importNMEA)
-                }.padding(16).tabItem{Text("音声・GPS")}
+                    GPSSynchronizationPreferences(model:model)
+                }.padding(16)}.tabItem{Text("音声・GPS")}
+                ExportPreferences(model:model).tabItem{Text("書き出し・印刷")}
                 ScrollView{VStack(alignment:.leading,spacing:14) {
                     Text("カード設定の読み出し（読み取り専用）").font(.headline)
                     if model.cardFiles.isEmpty {Text("この入力には読み出せるFAT16設定ファイルがありません。部分バックアップに設定領域は含まれないことがあります。").font(.caption)}
@@ -58,8 +59,8 @@ struct CapabilitiesView:View {
         ("IMG / SD / 選択録画バックアップ","対応形式: YP_FORMAT_1.01・D101/D102・H.264。SD経路は管理者読み取り専用ヘルパー。"),
         ("音声 / GPS / 地図","PCM形式ヘッダー、Tokyo→WGS84、速度、MapKitルート・現在位置、KML / GPX / CSV。"),
         ("360°表示","フラット、パノラマ、前後、4／16分割、ドーム、リング、全球。標準魚眼モデル・手動校正。"),
-        ("確認と書き出し","シーク、逆再生、速度、NIGHT、回転、しおり、検索、PNG/JPEG、音声付きMP4、WAV、印刷。"),
-        ("全機能互換ではありません","AVI / MotionJPEG、機種別工場校正、暗号化カード、全機種形式、SD設定書き戻し、フォーマット／削除は未対応。"),
+        ("確認と書き出し","シーク、逆再生、速度、NIGHT、回転、しおり、検索、PNG/JPEG、音声付きMP4 / Motion JPEG AVI、選択字幕、WAV、間隔指定静止画・ページ印刷。"),
+        ("全機能互換ではありません","機種別工場校正、暗号化カード、全機種形式、SD設定書き戻し、フォーマット／削除は未対応。"),
         ("検証範囲","実IMG全体の解析と、実映像のMacテストを区別します。物理SD、長時間全録画デコード、Intel、署名・公証は別途検証が必要です。")]
     var body:some View {VStack(alignment:.leading,spacing:16){HStack{Text("PC Browser Mac · 対応状況").font(.title2);Spacer();Button("閉じる"){dismiss()}.keyboardShortcut(.cancelAction)};ForEach(Array(rows.enumerated()),id:\.offset){_,row in VStack(alignment:.leading,spacing:5){Text(row.0).font(.headline);Text(row.1).font(.callout).foregroundStyle(.secondary)}};Spacer(minLength:0)}.padding(25).frame(width:700,height:590)}
 }

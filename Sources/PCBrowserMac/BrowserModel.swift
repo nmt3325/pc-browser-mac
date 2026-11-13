@@ -46,6 +46,18 @@ import PCBrowserCore
     @Published var inFrame=0
     @Published var outFrame=0
     @Published var useRange=false
+    @Published var subtitleFields: SubtitleFields = .defaults
+    @Published var samplingBySeconds = false
+    @Published var samplingFrames = 1
+    @Published var samplingSeconds = 1.0
+    @Published var printFramesPerPage = 4
+    @Published var trackStyle = TrackStyle()
+    @Published var openEarthAfterExport = false
+    @Published var externalGPSTrack: ExternalGPSTrack? { didSet { updateRoute() } }
+    @Published var externalGPSStatus = "外部ログ未選択"
+    @Published var useExternalGPS = false { didSet { updateRoute() } }
+    @Published var deviceTimeZoneID = "" { didSet { updateRoute() } }
+    @Published var gpsLogOffset = 0.0 { didSet { updateRoute() } }
     @Published var exportSubtitles=true
     @Published var showSettings=false
     @Published var showCapabilities=false
@@ -72,7 +84,20 @@ import PCBrowserCore
     var hasUnsearchedDetails:Bool {index?.recordings.contains{$0.statistics==nil} ?? false}
     var hasDetailFilter:Bool {filter=="GPSあり" || filter=="音声あり" || Double(minSpeed) != nil}
     var packet:FramePacket? {guard let r=recording,r.packets.indices.contains(frameIndex) else{return nil};return r.packets[frameIndex]}
-    var coordinate:GeoCoordinate? {packet?.telemetry.coordinate(datum:datum)}
+    var gpsSynchronization: GPSLogSynchronization? {
+        guard useExternalGPS, let track = externalGPSTrack, let zone = TimeZone(identifier: deviceTimeZoneID), gpsLogOffset.isFinite else { return nil }
+        return .init(track: track, deviceTimeZone: zone, logOffsetSeconds: gpsLogOffset)
+    }
+    var coordinate:GeoCoordinate? { useExternalGPS ? gpsSynchronization?.sample(packet?.telemetry.clock)?.coordinate : packet?.telemetry.coordinate(datum:datum) }
+    var currentSpeedKMH: Double? { useExternalGPS ? gpsSynchronization?.sample(packet?.telemetry.clock)?.speedKMH : packet?.telemetry.speedKMH }
+    var gpsSynchronizationStatus: String {
+        guard useExternalGPS else { return "元カードのGPSを使用中" }
+        guard gpsSynchronization != nil else { return "同期なし — 日付付きログとタイムゾーンを指定してください" }
+        return coordinate == nil ? "外部GPS: 現在時刻に有効な位置なし" : "外部GPS: UTCログと明示指定した機器時刻を同期中"
+    }
+    func sampledExportFrames() throws -> [Int] {
+        try FrameSampling.indices(starts: timeline.starts, range: exportFrames, everyFrames: samplingFrames, everySeconds: samplingBySeconds ? samplingSeconds : nil)
+    }
     var currentSeconds:Double {timeline.starts.indices.contains(frameIndex) ? timeline.starts[frameIndex]:0}
     var activeAudioClockSeconds:Double? {
         guard let player=audioPlayer,player.isPlaying else{return nil}
@@ -125,6 +150,7 @@ import PCBrowserCore
     private func load(_ source:any ByteSource,name:String,limit:UInt64?=nil,recovery:Bool=false) {
         cancel();generation=UUID();let token=generation,flag=ScanCancellation(),began=ProcessInfo.processInfo.systemUptime;cancellation=flag
         self.source=source;scanLimit=limit;index=nil;selectedID=nil;image=nil;sourceName=name;progress=0;scanning=true;busy=false;errorMessage=nil;selectedExports=[];cardFiles=[]
+        useExternalGPS=false;externalGPSTrack=nil;externalGPSStatus="外部ログ未選択";deviceTimeZoneID="";gpsLogOffset=0
         firstListSeconds=0;catalogSeconds=0;detailSeconds=0;archiveNotice=(source as? ArchiveSource)?.isHashVerified == false ? "バックアップSHA-256: 未照合（一覧表示後に照合）":""
         status=recovery ? "全領域を読み取り専用で復旧走査しています…":"映像を読み込まずに録画索引を取得しています…"
         Task {
@@ -212,8 +238,12 @@ import PCBrowserCore
     }
     func updateRoute() {
         guard let r=recording else{route=[];return};var out:[GeoCoordinate]=[],last:GeoCoordinate?
-        for p in r.packets {if let c=p.telemetry.coordinate(datum:datum),c != last {out.append(c);last=c}}
-        if out.count>20000 {let step=max(1,out.count/20000);route=out.enumerated().compactMap{$0.offset%step==0 ? $0.element:nil}}else{route=out}
+        let step=max(1,Int(ceil(Double(r.packets.count)/20000))), sync=gpsSynchronization
+        for i in r.packets.indices where i % step == 0 || i == r.packets.count - 1 {
+            let p=r.packets[i], c=useExternalGPS ? sync?.sample(p.telemetry.clock)?.coordinate : p.telemetry.coordinate(datum:datum)
+            if let c,c != last {out.append(c);last=c}
+        }
+        route=out
     }
     func renderFrame(_ position:Int) async {
         guard let renderer,let r=recording,r.packets.indices.contains(position) else{return}

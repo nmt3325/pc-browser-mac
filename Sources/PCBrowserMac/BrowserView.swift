@@ -117,7 +117,7 @@ struct BrowserView: View {
     }
     private var metadata:some View {
         HStack(alignment:.top,spacing:28) {
-            VStack(alignment:.leading,spacing:8){LabeledContent("カード時刻",value:model.packet?.cardTime ?? "—");LabeledContent("速度",value:model.packet?.telemetry.speedKMH.map{String(format:"%.2f km/h",$0)} ?? "—");LabeledContent("WGS84位置",value:model.coordinate.map{String(format:"%.6f, %.6f",$0.latitude,$0.longitude)} ?? "—");LabeledContent("CH / 種別raw",value:model.packet.map{String($0.channel)} ?? "—");LabeledContent("連続録画",value:model.recording.map{"\($0.blockCount) 保存ブロック / \($0.frameCount) フレーム"} ?? "—")}
+            VStack(alignment:.leading,spacing:8){LabeledContent("カード時刻",value:model.packet?.cardTime ?? "—");LabeledContent("速度",value:model.currentSpeedKMH.map{String(format:"%.2f km/h",$0)} ?? "—");LabeledContent("WGS84位置",value:model.coordinate.map{String(format:"%.6f, %.6f",$0.latitude,$0.longitude)} ?? "—");LabeledContent("CH / 種別raw",value:model.packet.map{String($0.channel)} ?? "—");LabeledContent("連続録画",value:model.recording.map{"\($0.blockCount) 保存ブロック / \($0.frameCount) フレーム"} ?? "—")}
             VStack(alignment:.leading,spacing:8){LabeledContent("フレームLBA",value:model.packet.map{String($0.headerSector)} ?? "—");LabeledContent("映像 / 音声",value:model.packet.map{"\($0.videoBytes) / \($0.auxiliaryBytes) bytes"} ?? "—");LabeledContent("加速度raw",value:model.packet?.telemetry.accelerationRaw.map{String($0)}.joined(separator:" / ") ?? "—");LabeledContent("衛星数 / fix raw",value:model.packet.map{"\($0.telemetry.satelliteCount) / \($0.telemetry.fixRaw)"} ?? "—")}
         }.font(.caption).padding(14).frame(maxWidth:.infinity,alignment:.leading)
     }
@@ -125,17 +125,17 @@ struct BrowserView: View {
         VStack(alignment:.leading,spacing:12) {
             HStack{Toggle("範囲指定",isOn:$model.useRange);Button("INを現在位置に"){model.inFrame=model.frameIndex;model.useRange=true};Button("OUTを現在位置に"){model.outFrame=model.frameIndex;model.useRange=true};Button("全範囲"){model.useRange=false};Spacer()}
             Text(model.useRange ? "フレーム \(min(model.inFrame,model.outFrame)+1) – \(max(model.inFrame,model.outFrame)+1)（両端を含む）":"選択中の録画全体を書き出します").font(.caption).monospacedDigit()
-            Toggle("動画字幕: カード時刻・速度・位置情報",isOn:$model.exportSubtitles).font(.caption)
-            HStack{Button("音声付きMP4",action:model.exportMovie);Button("WAV音声",action:model.exportAudio);Button("連続PNG",action:model.exportSequence);Spacer()}
+            HStack{Toggle("動画に字幕を重ねる",isOn:$model.exportSubtitles);Button("字幕・静止画・GPS出力の設定"){model.showSettings=true}}.font(.caption)
+            HStack{Button("音声付きMP4"){model.exportMovie()};Button("Motion JPEG AVI"){model.exportMovie(avi:true)};Button("WAV音声",action:model.exportAudio);Button("連続PNG",action:model.exportSequence);Spacer()}
             Text("表示変換・NIGHT・回転は動画と静止画にも反映。バックアップは元データを保持します。").font(.caption2).foregroundStyle(.secondary)
         }.padding(12).disabled(model.recording==nil || model.busy)
     }
     private var exportMenu:some View {
         Menu {
             Button("表示中の静止画（PNG）"){model.exportStill()};Button("表示中の静止画（JPEG）"){model.exportStill(jpeg:true)}
-            Button("音声付きMP4動画",action:model.exportMovie);Button("WAV音声",action:model.exportAudio);Button("連続PNG",action:model.exportSequence)
+            Button("音声付きMP4動画"){model.exportMovie()};Button("Motion JPEG AVI動画"){model.exportMovie(avi:true)};Button("WAV音声",action:model.exportAudio);Button("連続PNG",action:model.exportSequence)
             Divider();Button("GPS / センサーCSV"){model.exportLog("csv")};Button("KML（Google Earth対応）"){model.exportLog("kml")};Button("GPX"){model.exportLog("gpx")}
-            Divider();Button("選択録画の再生可能バックアップ",action:model.backup);Button("表示中の静止画を印刷"){model.printFrame()};Button("範囲から4コマを印刷"){model.printContactSheet()}
+            Divider();Button("選択録画の再生可能バックアップ",action:model.backup);Button("表示中の静止画を印刷"){model.printFrame()};Button("間隔指定のページ印刷"){model.printContactSheet()}
         }label:{Label("書き出し",systemImage:"square.and.arrow.up")}
     }
 }
