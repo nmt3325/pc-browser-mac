@@ -21,6 +21,12 @@
 
 Actionsのソースcommit、テスト数・失敗数、OS／Swift、ZIPのSHA-256、署名・CLI検査結果を`build-metadata.json`へ記録する。GitHub Actionsが成功したことと、過去の実データ試験の結果は分けて扱う。
 
+## 互換性確認（手動・任意）
+
+[Compatibility matrix (manual)](https://github.com/nmt3325/pc-browser-mac/actions/workflows/compat.yml)は`workflow_dispatch`専用。通常のpush／PRでは実行しない。GitHub-hostedの`macos-14`（arm64）と`macos-15-intel`（x86_64）で、合成単体テスト、releaseビルド、ad-hoc署名、ZIP展開後の署名・CLI合成スモークを実行し、`PC-Browser-Mac-compat-<runner>-<run番号>`として証跡を保持14日で保存する。
+
+これは**単体テストとCLI合成スモークのみ**の互換性確認。Intel版・macOS 14実機でのGUI、実メディア、実SD、外部アプリ連携は確認しない。通常配布物は引き続き`macos.yml`のarm64 artifactで、この手動workflowの成果物は配布対象にしない。macOSランナーは分単位課金の倍率が高いため、必要なときだけ実行する。
+
 ## このCIで検査しないもの
 
 実カード、私的映像、GPS実座標、機密設定はアップロードしない。GUI操作、音声の実再生、Metal各表示、MapKit、実SDの管理者認証、メーカー光学校正、全カード映像のデコード、長時間AV同期をこのCIで通過したとは表示しない。それらの過去の確認範囲は[検証記録](validation-catalog.md)に記載する。

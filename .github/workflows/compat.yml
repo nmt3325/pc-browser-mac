@@ -1,0 +1,72 @@
+name: Compatibility matrix (manual)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: compat-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compat:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: macOS 14 arm64
+            runner: macos-14
+            arch: arm64
+            slug: macos14-arm64
+          - label: macOS 15 Intel x86_64
+            runner: macos-15-intel
+            arch: x86_64
+            slug: macos15-intel-x86_64
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '14.0'
+      EXPECTED_ARCH: ${{ matrix.arch }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Record toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = "$EXPECTED_ARCH"
+          sw_vers
+          xcodebuild -version
+          swift --version
+      - name: Run synthetic unit tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          swift test --jobs 2 2>&1 | tee unit-tests.log
+      - name: Build signed app bundle
+        shell: bash
+        run: bash scripts/build-app.sh
+      - name: Verify extracted package and CLI smoke
+        shell: bash
+        run: bash scripts/package-app.sh
+      - name: Upload compatibility build evidence
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: PC-Browser-Mac-compat-${{ matrix.slug }}-${{ github.run_number }}
+          path: dist/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+      - name: Upload test log even on failure
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: compat-unit-test-log-${{ matrix.slug }}-${{ github.run_number }}
+          path: unit-tests.log
+          if-no-files-found: ignore
+          retention-days: 14

@@ -16,15 +16,22 @@ Legend: `[x]` verified or explicitly documented; `[ ]` incomplete. Implementatio
 - [x] One-frame-per-page native PDF (9 pages from real-media input) and four-frame-per-page PDF (3 pages) generated.
 - [ ] All sampling/printing GUI paths and physical printers.
 - [ ] KML points/routes, color/alpha/width/density controls and explicit external Earth application launch.
+  - [x] Colors, alpha, width, density and XML structure (independent parse).
+  - [x] Actual installed bundle-ID launch through LaunchServices with completion/error propagation (build 9).
+  - [ ] Earth's own display of the generated document, route and points (accessibility and screen capture cannot show it).
 - [x] Timestamped external NMEA synchronization: explicit timezone/offset, GUI-model opt-in and no extrapolation verified with synthetic logs; no host-timezone assumption.
 - [ ] Sensor/trigger search and recording-kind semantics, calibrated G/gyro and physical camera identity.
 - [ ] Original optical calibration, VRpn/NIGHT pixel-equivalence and synchronized physical-camera playback.
 - [ ] Windows PC Browser / PC Viewer backup compatibility; full-image clone/restore to new output files.
+  - [x] Deep, independent Ghidra and read-only original-process analysis of the fixed XOR table and extent table.
+  - [x] Single-file read-only adapter, 14 tests and native 1,200-frame plain/XOR checks on manually built fixtures (build 10; not original interoperability).
+  - [ ] The genuine Windows application lists no recordings from the manual partial files; find the cause or obtain a real Windows-generated backup.
+  - [ ] Splits, writer, PC Viewer, full copy and restore.
 - [ ] Model/FW identity and recording configuration editor, proven settings encoding and safe copied-image application.
 - [ ] Password, erase/format and FW updates: recover exact algorithms; require device-specific confirmation before original media operations.
 
 ## Validation / delivery
-- [x] All original 77 tests preserved; build 8 has 112 passing tests in GitHub Actions, including adverse inputs.
+- [x] All original 77 tests preserved; build 10 has 126 passing tests in GitHub Actions (112 earlier plus 14 BAK), including adverse inputs.
 - [x] Exact build-6 CI artifact: CLI/GUI checks passed, including old continuous boundaries and new exports. Validation scope remains the private 1,200-frame partial backup plus synthetic inputs, not the full card.
 - [ ] Separately record physical SD, whole-card media, device/model, Windows-original interoperability, printer, Intel and older-macOS validation gaps.
 
@@ -53,6 +60,8 @@ Legend: `[x]` verified or explicitly documented; `[ ]` incomplete. Implementatio
 - Interleaved header-only comparison, three runs each: build-7 catalog 19.182/15.504/11.987 s; build-8 17.609/13.102/12.348 s. Catalog IDs, all block LBAs/counts/ordinals, 152,400 reads and input size/mtime match. Medians 15.504 vs 13.102 s, but strong cache/time variance and the final pair reversing prevent an isolated speedup claim. First-row median 0.002123 s.
 - Native sample of build 8 shows the active scanner mostly waiting in pread. Next checkpoint: recover/verify original control/block references rather than relaxing pair validation or adding a stale persistent cache. Whole-card media and physical SD remain unverified.
 
-## Build 9 work in progress
-- Explicit Google Earth launch now recognizes the signed app's actual `com.Google.GoogleEarthPro` bundle ID, propagates LaunchServices completion, and has a separately opt-in native integration check. CI and exact-artifact/Earth document verification are pending.
-- BAK IO constructor and fixed XOR table are proven by Deep plus independent read-only checks; original-application interoperability and part mapping remain in progress, not complete.
+## Build 9 / 10 checkpoints
+- Build 9 (Actions 43388655103, 112 tests): explicit Google Earth launch uses the real `com.Google.GoogleEarthPro` bundle ID with LaunchServices completion; generated KML independently parsed. Earth document display remains unverified.
+- Build 10 (Actions 43390457538, 126 tests): read-only Windows BAK adapter (fixed XOR, UInt64 extents, partial/no integrity claim). Exact artifact passed native plain/XOR 1,200-frame checks and the broad regression; manual fixtures only, no original interoperability. Details: `docs/validation-full-port.md`.
+- Static settings anchors (`config\set.ini`, `[SDINFO]`, `[YPFMT]`, model names) are recorded in `docs/deep-full-port.md`; no settings writer is implemented.
+- The Mac and Windows reference environments went offline at about 08:50 UTC on 2026-11-13. New exact-artifact, GUI and original-application checks need a restarted environment.
