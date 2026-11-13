@@ -184,15 +184,34 @@ public enum CatalogScanner {
             return (ref,h)
         }
         var blocks: [String:RecordBlock] = [:], skippable: [UInt64:RecordBlock] = [:], rejected = 0, recovery = false, backward = 0
+        // Every header/trailer is still checked on the forward fallback. Retain
+        // only the newest 512-byte boundary per block; expanding telemetry for
+        // all intermediate frames cannot change the catalog and made long lists slow.
+        // No video/PCM is buffered and no on-disk cache is created.
+        var pendingLast: [String:(sector:UInt64,header:Data)] = [:], boundaryParses = 0
         var lastPublished = Date.timeIntervalSinceReferenceDate
-        func index() -> ImageIndex {
-            ImageIndex(control:control,recordings:RecordingSessions.group(Array(blocks.values)),scannedBytes:source.bytes,
-                       isPartialScan:limitBytes != nil && end < diskEnd || source.isPartialCopy,rejectedCandidates:rejected,
-                       isMetadataCatalog:true,recoveryRecommended:recovery,catalogReadCalls:source.calls,backlinkBlocks:backward)
+        func packet(_ h:Data, sector:UInt64) throws -> FramePacket {
+            boundaryParses += 1
+            return try FramePacket.parse(h,sector:sector,diskBytes:source.byteCount)
         }
-        func publish(_ fraction: Double, force: Bool = false) {
+        func index() throws -> ImageIndex {
+            // Publish real boundary telemetry, including the final packet even
+            // after a gap or a cancellation-free early stop; never publish stale ends.
+            for (key,pending) in pendingLast {
+                guard let old = blocks[key] else { throw BrowserError.invalid("索引の境界が見つかりません") }
+                let last = try packet(pending.header,sector:pending.sector)
+                blocks[key] = .init(recordSector:old.recordSector,channel:old.channel,first:old.first,last:last,
+                                    metadata:old.metadata,frameCount:old.frameCount,countIsEstimate:old.countIsEstimate)
+            }
+            pendingLast.removeAll(keepingCapacity:true)
+            return ImageIndex(control:control,recordings:RecordingSessions.group(Array(blocks.values)),scannedBytes:source.bytes,
+                       isPartialScan:limitBytes != nil && end < diskEnd || source.isPartialCopy,rejectedCandidates:rejected,
+                       isMetadataCatalog:true,recoveryRecommended:recovery,catalogReadCalls:source.calls,
+                       catalogBoundaryParses:boundaryParses,backlinkBlocks:backward)
+        }
+        func publish(_ fraction: Double, force: Bool = false) throws {
             let now = Date.timeIntervalSinceReferenceDate
-            if force || now-lastPublished >= 0.15 { progress(index(),fraction); lastPublished = now }
+            if force || now-lastPublished >= 0.15 { progress(try index(),fraction); lastPublished = now }
         }
         // Single-camera layout: the control stores one metadata sector per camera.
         // Only activate this accelerator when the actual first packet verifies that layout.
@@ -206,13 +225,13 @@ public enum CatalogScanner {
                       firstRef.channel == lastRef.channel, firstRef.sequence == 0,
                       lastRef.sequence < 120*60*60,
                       firstRef.sector <= lastRef.sector,
-                      let first = try? FramePacket.parse(firstH,sector:firstRef.sector,diskBytes:source.byteCount),
-                      let last = try? FramePacket.parse(lastH,sector:lastRef.sector,diskBytes:source.byteCount) else { break }
+                      let first = try? packet(firstH,sector:firstRef.sector),
+                      let last = try? packet(lastH,sector:lastRef.sector) else { break }
                 let block = RecordBlock(recordSector:lastRef.record,channel:lastRef.channel,first:first,last:last,
                                         metadata:m,frameCount:Int(lastRef.sequence)+1,countIsEstimate:true)
                 if blocks[block.key] != nil { break }
                 blocks[block.key] = block; skippable[UInt64(block.recordSector)] = block; backward += 1; cursor = firstRef.previous
-                publish(backward == 1 ? 0.01:0.05,force:backward == 1)
+                try publish(backward == 1 ? 0.01:0.05,force:backward == 1)
             }
         }
         let total = regions.reduce(UInt64(0)) { $0+$1.upperBound-$1.lowerBound }
@@ -234,18 +253,15 @@ public enum CatalogScanner {
                         guard ref.tail < range.upperBound else { recovery = true; break }
                         let key = "\(ref.record)-\(ref.channel)"
                         let existing = blocks[key]
-                        let parsed: FramePacket?
-                        // Telemetry only for boundary packets. Each forward header pair is still checked.
-                        if existing == nil || ref.sequence == 0 { parsed = try FramePacket.parse(h,sector:sector,diskBytes:source.byteCount) }
-                        else { parsed = nil }
                         let m = metadata(ref.record).flatMap { $0.matches(ref) ? $0 : nil }
                         if let old = existing, !old.countIsEstimate {
-                            // Last boundary must carry real telemetry; this allocation is small and never media.
-                            let last = try FramePacket.parse(h,sector:sector,diskBytes:source.byteCount)
-                            blocks[key] = .init(recordSector:old.recordSector,channel:old.channel,first:old.first,last:last,
+                            // checked() above still validates the complete pair and
+                            // all length/identity fields before counting this frame.
+                            pendingLast[key] = (sector,h)
+                            blocks[key] = .init(recordSector:old.recordSector,channel:old.channel,first:old.first,last:old.last,
                                                 metadata:old.metadata,frameCount:old.frameCount+1,countIsEstimate:false)
                         } else if existing == nil {
-                            let p = try parsed ?? FramePacket.parse(h,sector:sector,diskBytes:source.byteCount)
+                            let p = try packet(h,sector:sector)
                             blocks[key] = .init(recordSector:ref.record,channel:ref.channel,first:p,last:p,metadata:m,frameCount:1,countIsEstimate:false)
                         }
                         sector = ref.tail+1; zeros = 0; unknown = 0
@@ -262,12 +278,12 @@ public enum CatalogScanner {
                     if zeros >= 8 || unknown >= 4096 { recovery = true; break }
                 }
                 let fraction = total > 0 ? Double(covered+sector-range.lowerBound)/Double(total) : 1
-                publish(min(0.99,max(0.05,fraction)))
+                try publish(min(0.99,max(0.05,fraction)))
             }
             covered += range.upperBound-range.lowerBound
         }
-        publish(1,force:true)
-        return index()
+        try publish(1,force:true)
+        return try index()
     }
 
     /// Lazily validates every frame header/trailer only in the selected session.

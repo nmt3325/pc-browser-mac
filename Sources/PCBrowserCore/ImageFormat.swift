@@ -125,6 +125,7 @@ public struct ImageIndex: Sendable {
     public var isMetadataCatalog = false
     public var recoveryRecommended = false
     public var catalogReadCalls = 0
+    public var catalogBoundaryParses = 0
     public var backlinkBlocks = 0
     public var frameCount: Int { recordings.reduce(0) { $0+$1.frameCount } }
     public var validatedFrameCount: Int { recordings.reduce(0) { $0+$1.packets.count } }
