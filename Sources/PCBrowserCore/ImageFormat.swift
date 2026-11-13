@@ -127,6 +127,8 @@ public struct ImageIndex: Sendable {
     public var catalogReadCalls = 0
     public var catalogBoundaryParses = 0
     public var backlinkBlocks = 0
+    /// Region table of the control sector, when it is consistent with the disk size.
+    public var layout: DiskLayout?
     public var frameCount: Int { recordings.reduce(0) { $0+$1.frameCount } }
     public var validatedFrameCount: Int { recordings.reduce(0) { $0+$1.packets.count } }
     public var blockCount: Int { recordings.reduce(0) { $0+$1.blockCount } }
@@ -213,8 +215,11 @@ public enum ImageScanner {
             return a.startTime < b.startTime
         }
         progress(covered, total, count)
-        return ImageIndex(control: control, recordings: RecordingSessions.groupValidated(recordings,source:source), scannedBytes: covered,
-                          isPartialScan: end < source.byteCount || source.isPartialCopy, rejectedCandidates: rejected)
+        let layout = (try? source.read(at: control.sector * 512, count: 512)).flatMap {
+            DiskLayout(control: $0, firstRecordSector: control.firstRecordSector, diskSectors: source.byteCount / 512)
+        }
+        return ImageIndex(control: control, recordings: RecordingSessions.groupValidated(recordings,source:source,eventRegion:layout?.eventRegion), scannedBytes: covered,
+                          isPartialScan: end < source.byteCount || source.isPartialCopy, rejectedCandidates: rejected, layout: layout)
     }
 }
 

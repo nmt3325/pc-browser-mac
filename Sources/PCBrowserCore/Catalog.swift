@@ -31,6 +31,8 @@ public struct RecordMetadata: Sendable {
     public let sessionSector: UInt32, sessionSerial: UInt32, frameOffset: UInt32
     public let startsSession: Bool
     public let formatKey: String
+    /// Header byte 0x0C. In the event region it names the stream phase (5 pre-roll, 2 trigger, 3 post).
+    public let blockType: UInt8
     static func parse(_ h: Data, sector: UInt32) throws -> RecordMetadata {
         let b = Bytes(h), magic = try b.le32(0)
         guard h.count == 512, [0xFFFFD103,0xFFFFD105].contains(magic),
@@ -45,7 +47,7 @@ public struct RecordMetadata: Sendable {
         let format = h.subdata(in:0xC..<0x34).map { String(format:"%02x",$0) }.joined()
         return .init(sector:sector,identifier:try b.le32(4),generation:try b.le32(0x1F8),
                      sessionSector:root,sessionSerial:try b.le32(0x9C),frameOffset:ordinal,
-                     startsSession:magic == 0xFFFFD103 && root == sector && ordinal == 0,formatKey:format)
+                     startsSession:magic == 0xFFFFD103 && root == sector && ordinal == 0,formatKey:format,blockType:h[h.startIndex+0x0C])
     }
     func matches(_ p: PacketReference) -> Bool { p.record == sector && p.recordID == identifier && p.generation == generation }
 }
@@ -82,7 +84,9 @@ public enum RecordingSessions {
     /// chain leads from such a block into a block with metadata, it is the beginning of that recording
     /// (a ring wrap overwrote its first sectors), exactly as the original keeps it in the recording's backup.
     /// A header that is present but names another record stays an unassigned fragment.
-    public static func group(_ blocks: [RecordBlock], previous: [String:UInt64] = [:], adoptable: Set<String> = []) -> [Recording] {
+    /// Blocks whose metadata sector lies in `eventRegion` form one event per (root, serial, channel): the three phases of an
+    /// event differ in `formatKey` only by their block type and must stay one recording.
+    public static func group(_ blocks: [RecordBlock], previous: [String:UInt64] = [:], adoptable: Set<String> = [], eventRegion: Range<UInt64>? = nil) -> [Recording] {
         var follower: [UInt64:RecordBlock] = [:]
         if !adoptable.isEmpty {
             for b in blocks.sorted(by:{ $0.first.headerSector < $1.first.headerSector }) {
@@ -104,7 +108,9 @@ public enum RecordingSessions {
         for b in blocks {
             let key: String
             if let m = b.metadata {
-                key = sessionKey(m,channel:b.channel); order[b.key] = Double(m.frameOffset)
+                if let eventRegion, eventRegion.contains(UInt64(m.sector)) { key = "event-\(m.sessionSector)-\(m.sessionSerial)-\(b.channel)" }
+                else { key = sessionKey(m,channel:b.channel) }
+                order[b.key] = Double(m.frameOffset)
             } else if adoptable.contains(b.key), let (root,hops) = adoptedRoot(b), let m = root.metadata {
                 key = sessionKey(m,channel:b.channel); order[b.key] = Double(m.frameOffset)-Double(hops)*0.001
             } else { key = "fragment-\(b.key)" }
@@ -124,7 +130,7 @@ public enum RecordingSessions {
     }
 
     /// Recovery keeps every already validated packet, including orphaned fragments.
-    static func groupValidated(_ records: [Recording], source: any ByteSource) -> [Recording] {
+    static func groupValidated(_ records: [Recording], source: any ByteSource, eventRegion: Range<UInt64>? = nil) -> [Recording] {
         var packetGroups: [String:[FramePacket]] = [:], blocks: [RecordBlock] = []
         for r in records {
             guard let first = r.packets.first, let last = r.packets.last else { continue }
@@ -137,7 +143,7 @@ public enum RecordingSessions {
             let block = RecordBlock(recordSector:r.recordSector,channel:r.channel,first:first,last:last,metadata:validMeta,frameCount:r.packets.count,countIsEstimate:false)
             blocks.append(block); packetGroups[block.key] = r.packets
         }
-        return group(blocks).map { r in
+        return group(blocks,eventRegion:eventRegion).map { r in
             var loaded = r
             loaded.packets = r.blocks.flatMap { packetGroups[$0.key] ?? [] }
             loaded.statistics = RecordingStatistics.make(loaded.packets)
@@ -172,6 +178,7 @@ public enum CatalogScanner {
         let end = start + min((limitBytes ?? source.byteCount)/512,diskEnd-start)
         let controlBytes = try source.read(at:control.sector*512,count:512), cb = Bytes(controlBytes)
         var regions: [Range<UInt64>] = [start..<end]
+        let layout = DiskLayout(control:controlBytes,firstRecordSector:start,diskSectors:diskEnd)
         // The original control table distinguishes normal/event/history regions.
         // E202 history is not treated as H.264 data. Invalid bounds use the safe generic path.
         let a = UInt64(try cb.le32(0x1C2)), b = UInt64(try cb.le32(0x1C6)), c = UInt64(try cb.le32(0x1CA))
@@ -242,10 +249,10 @@ public enum CatalogScanner {
                 }
                 if headerAbsent[sector] == true { adoptable.insert(key) }
             }
-            return ImageIndex(control:control,recordings:RecordingSessions.group(Array(blocks.values),previous:firstPrevious,adoptable:adoptable),scannedBytes:source.bytes,
+            return ImageIndex(control:control,recordings:RecordingSessions.group(Array(blocks.values),previous:firstPrevious,adoptable:adoptable,eventRegion:layout?.eventRegion),scannedBytes:source.bytes,
                        isPartialScan:limitBytes != nil && end < diskEnd || source.isPartialCopy,rejectedCandidates:rejected,
                        isMetadataCatalog:true,recoveryRecommended:recovery,catalogReadCalls:source.calls,
-                       catalogBoundaryParses:boundaryParses,backlinkBlocks:backward)
+                       catalogBoundaryParses:boundaryParses,backlinkBlocks:backward,layout:layout)
         }
         func publish(_ fraction: Double, force: Bool = false) throws {
             let now = Date.timeIntervalSinceReferenceDate
