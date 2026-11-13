@@ -21,22 +21,43 @@ enum ReportExport {
         var media = CGRect(x: 0, y: 0, width: 595, height: 842)
         guard let context = CGContext(consumer: consumer, mediaBox: &media, nil) else { throw BrowserError.io("レポートPDFを作成できません") }
         func n(_ value: Double?, suffix: String = "") -> String { value.map { String(format: "%.3f", $0) + suffix } ?? "—" }
-        let lines = ["PC Browser Mac — 録画レポート", "", report.startWallTime + " — " + report.endWallTime,
-                     "CH \(report.channel) / \(report.frames)フレーム / \(report.storageBlocks)保存ブロック", "録画内の時間: " + n(report.durationSeconds, suffix: " 秒"),
-                     "平均速度（有効区間）: " + n(report.meanSpeedKMH, suffix: " km/h"), "最高速度: " + n(report.maximumSpeedKMH, suffix: " km/h"),
-                     "速度からの推定距離: " + n(report.distanceEstimateKM, suffix: " km"), "GPS / 速度の有効時間: " + n(report.speedCoverageSeconds, suffix: " 秒"),
-                     "", "集計範囲: 有効GPS / 速度を持つ区間の台形積分。2秒超の欠測は除外。", "距離は計算値です。原版と同じ集計規則・機種別イベント判定ではありません。", "カード時刻にUTCは推測付加しません。センサー・入力・イベントの意味は未確定。",
-                     "", "加速度 raw XYZ: " + report.accelerationRaw.map { "\($0.minimum)…\($0.maximum)" }.joined(separator: " / "),
-                     "ジャイロ raw XYZ: " + report.gyroRaw.map { "\($0.minimum)…\($0.maximum)" }.joined(separator: " / "),
-                     "イベント raw: " + report.eventRawDistribution.map { String(format: "%02X:%d枚", $0.value, $0.frames) }.joined(separator: " / "),
-                     "", "添付画像: 指定した参照位置・前後2秒・開始／終了（重複は除外）。", "自動イベント検出ではありません。元カードは変更していません。", "", "備考（このMacで入力）", report.notes]
-        let paragraph = NSMutableParagraphStyle(); paragraph.lineSpacing = 5
-        let text = NSAttributedString(string: lines.joined(separator: "\n"), attributes: [.font: NSFont(name: "Hiragino Sans", size: 11) ?? NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.black, .paragraphStyle: paragraph])
-        let setter = CTFramesetterCreateWithAttributedString(text), path = CGPath(rect: CGRect(x: 32, y: 32, width: 531, height: 778), transform: nil)
+        // Never request the ambiguous family name "Hiragino Sans": it can
+        // resolve to an ultra-light face, making printed Japanese nearly gray.
+        let bodyFont = NSFont(name: "HiraginoSans-W3", size: 11) ?? NSFont.systemFont(ofSize: 11, weight: .regular)
+        let ink = NSColor(srgbRed: 0.17, green: 0.17, blue: 0.17, alpha: 1)
+        let text = NSMutableAttributedString(string: "")
+        func append(_ string: String, font: NSFont? = nil, space: CGFloat = 4) {
+            let paragraph = NSMutableParagraphStyle(); paragraph.lineHeightMultiple = 1.35; paragraph.paragraphSpacing = space
+            text.append(NSAttributedString(string: string + "\n", attributes: [.font: font ?? bodyFont, .foregroundColor: ink, .paragraphStyle: paragraph]))
+        }
+        func heading(_ string: String) { append(string, font: NSFont.systemFont(ofSize: 12.5, weight: .semibold), space: 8) }
+        append("PC Browser Mac — 録画レポート", font: NSFont.systemFont(ofSize: 18, weight: .semibold), space: 20)
+        append(report.startWallTime + " — " + report.endWallTime)
+        append("CH \(report.channel) / \(report.frames)フレーム / \(report.storageBlocks)保存ブロック", space: 16)
+        heading("録画の概要")
+        for line in ["録画内の時間: " + n(report.durationSeconds, suffix: " 秒"),
+                     "平均速度（有効区間）: " + n(report.meanSpeedKMH, suffix: " km/h"),
+                     "最高速度: " + n(report.maximumSpeedKMH, suffix: " km/h"),
+                     "速度からの推定距離: " + n(report.distanceEstimateKM, suffix: " km"),
+                     "GPS / 速度の有効時間: " + n(report.speedCoverageSeconds, suffix: " 秒")] { append(line) }
+        append("", space: 4); heading("集計の範囲と制約")
+        append("有効GPS / 速度を持つ区間の台形積分。2秒超の欠測は除外します。")
+        append("距離は計算値です。原版と同じ集計規則・機種別イベント判定ではありません。")
+        append("カード時刻にUTCは推測付加しません。センサー・入力・イベントの意味は未確定です。", space: 16)
+        heading("センサー範囲（raw counts）")
+        append("加速度 raw XYZ: " + report.accelerationRaw.map { "\($0.minimum)…\($0.maximum)" }.joined(separator: " / "))
+        append("ジャイロ raw XYZ: " + report.gyroRaw.map { "\($0.minimum)…\($0.maximum)" }.joined(separator: " / "))
+        append("イベント raw: " + report.eventRawDistribution.map { String(format: "%02X:%d枚", $0.value, $0.frames) }.joined(separator: " / "), space: 16)
+        heading("添付画像")
+        append("指定した参照位置・前後2秒・開始／終了（重複は除外）を末尾に添付します。")
+        append("自動イベント検出ではありません。元カードは変更していません。", space: 16)
+        heading("備考（このMacで入力）")
+        append(report.notes)
+        let setter = CTFramesetterCreateWithAttributedString(text), path = CGPath(rect: CGRect(x: 40, y: 54, width: 515, height: 744), transform: nil)
         var offset = 0
         while offset < text.length {
             if cancelled() { context.closePDF(); throw BrowserError.io("レポートをキャンセルしました") }
-            context.beginPDFPage(nil); context.textMatrix = .identity
+            context.beginPDFPage(nil); context.setFillColor(CGColor(gray: 1, alpha: 1)); context.fill(media); context.textMatrix = .identity
             let frame = CTFramesetterCreateFrame(setter, CFRange(location: offset, length: 0), path, nil), visible = CTFrameGetVisibleStringRange(frame)
             guard visible.length > 0 else { context.endPDFPage(); context.closePDF(); throw BrowserError.io("レポートのページ送りが停止しました") }
             CTFrameDraw(frame, context); context.endPDFPage(); offset += visible.length
@@ -44,10 +65,43 @@ enum ReportExport {
         context.closePDF()
         guard let document = PDFDocument(data: data as Data), let frames = PDFDocument(url: contacts) else { throw BrowserError.io("レポートPDFを結合できません") }
         for i in 0..<frames.pageCount { if let page = frames.page(at: i) { document.insert(page, at: document.pageCount) } }
-        guard let result = document.dataRepresentation() else { throw BrowserError.io("レポートPDFを確定できません") }
+        // Keep portrait text and landscape contact sheets at their own sizes,
+        // but number the entire report, not a second 1/N image sub-document.
+        let result = try numbered(document, cancelled: cancelled)
         if cancelled() { throw BrowserError.io("レポートをキャンセルしました") }
         try result.write(to: output, options: .withoutOverwriting); progress(1)
     }
+    private static func numbered(_ document: PDFDocument, cancelled: () -> Bool) throws -> Data {
+        let data = NSMutableData()
+        guard document.pageCount > 0, let consumer = CGDataConsumer(data: data as CFMutableData),
+              let context = CGContext(consumer: consumer, mediaBox: nil, nil) else { throw BrowserError.io("レポートPDFを確定できません") }
+        var closed = false
+        defer { if !closed { context.closePDF() } }
+        let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 9, weight: .regular), .foregroundColor: NSColor(srgbRed: 0.3, green: 0.3, blue: 0.3, alpha: 1)]
+        for i in 0..<document.pageCount {
+            if cancelled() || Task.isCancelled { throw BrowserError.io("レポートをキャンセルしました") }
+            guard let page = document.page(at: i) else { throw BrowserError.io("レポートのページがありません") }
+            var box = page.bounds(for: .mediaBox)
+            let boxData = Data(bytes: &box, count: MemoryLayout<CGRect>.size)
+            context.beginPDFPage([kCGPDFContextMediaBox as String: boxData] as CFDictionary)
+            context.textMatrix = .identity
+            page.draw(with: .mediaBox, to: context)
+            context.setFillColor(CGColor(gray: 1, alpha: 1)); context.fill(CGRect(x: box.minX, y: box.minY, width: box.width, height: 36))
+            func footer(_ string: String, right: Bool) {
+                let line = CTLineCreateWithAttributedString(NSAttributedString(string: string, attributes: attributes))
+                let width = CTLineGetTypographicBounds(line, nil, nil, nil)
+                context.textPosition = CGPoint(x: right ? box.maxX - 32 - width : box.minX + 32, y: box.minY + 18)
+                CTLineDraw(line, context)
+            }
+            footer("PC Browser Mac · 録画レポート", right: false)
+            footer("\(i + 1) / \(document.pageCount)", right: true)
+            context.endPDFPage()
+        }
+        // Flush the consumer before copying the backing data.
+        context.closePDF(); closed = true
+        return data as Data
+    }
+
 }
 
 extension BrowserModel {

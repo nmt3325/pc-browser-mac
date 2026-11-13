@@ -26,3 +26,10 @@ New trace anchors: `.bak` at VA `0x8A49CC`; `BDRBACKUP___` at `0x8A5588`, refere
 - Setting keys observed include RECINGMODE, PRERECTIME, POSTRECTIME, PRERECINT, POSTRECINT, RECAUDIO, ACCSEN, RECMOD, GPSRECTIME, BEEPRECORD, EVENTRECPER, PASSWORD, NRMRECSM and RECEXTTIME. Values/model dependencies remain unverified.
 
 The full dialog inventory is in `dialog-port-map.md`; it includes reports/remarks, standby schedules, person-detection settings and connection IDs rather than silently limiting the target to playback.
+
+## Additional deep backup traces
+
+- Constructor/lifetime checks at `0x545140`, `0x5751C0`, `0x575360`: evidence `ev_7d1ccb0ddf96afb833e98edbb7eb3745a2e34d255c49c2f88aba9da5bdd6f101`.
+- IO traces `0x5769B0`, `0x5772B0`, `0x5774E0`, `0x579B10`, `0x57F5F0`: evidence `ev_c132c890a2d76eb15baf06f0a409c8ba880820bc51a0b655895abe78743c9e48`, five complete decompiles, independently checked with Ghidra.
+- The reader consumes a 40-byte header: 12-byte `BDRBACKUP___` magic, 4 and 6-byte fields, a byte, a skipped byte, and two 8-byte fields. Builder and reader objects have different in-memory layouts; object offsets are not file offsets.
+- Per-extent serialization passes four 8-byte values (start, inclusive end, stored offset, length) through virtual calls. This is a trace anchor, **not** a complete proven backup specification. Model branches, offsets, versions and actual original-app interoperability still need verification before enabling a BAK adapter.

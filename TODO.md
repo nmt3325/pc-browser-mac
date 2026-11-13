@@ -13,7 +13,8 @@ Legend: `[x]` verified or explicitly documented; `[ ]` incomplete. Implementatio
 - [ ] Long-duration AVI beyond 4 GiB with real media, additional audio formats and destination-full behavior.
 - [ ] Selectable subtitle fields, including honest raw sensor/input overlays where semantics are not yet established.
 - [x] Frame/seconds sampling core tests; native CLI exports 12 distinct frames and a 3-page four-frame PDF, visually inspected (build 5).
-- [ ] All sampling/printing GUI paths and physical printers; one-frame page native test.
+- [x] One-frame-per-page native PDF (9 pages from real-media input) and four-frame-per-page PDF (3 pages) generated.
+- [ ] All sampling/printing GUI paths and physical printers.
 - [ ] KML points/routes, color/alpha/width/density controls and explicit external Earth application launch.
 - [ ] Timestamped external NMEA synchronization with explicit device timezone and log offset; no invented UTC timezone.
 - [ ] Sensor/trigger search and recording-kind semantics, calibrated G/gyro and physical camera identity.
@@ -23,8 +24,8 @@ Legend: `[x]` verified or explicitly documented; `[ ]` incomplete. Implementatio
 - [ ] Password, erase/format and FW updates: recover exact algorithms; require device-specific confirmation before original media operations.
 
 ## Validation / delivery
-- [ ] Existing 77 tests plus new feature/adverse-input tests pass in GitHub Actions without weakening existing checks.
-- [ ] Native CLI/GUI checks of the exact CI artifact, including old continuous audio/video boundaries and new exports.
+- [x] All original 77 tests preserved; build 6 has 109 passing tests in GitHub Actions, including adverse inputs.
+- [x] Exact build-6 CI artifact: CLI/GUI checks passed, including old continuous boundaries and new exports. Validation scope remains the private 1,200-frame partial backup plus synthetic inputs, not the full card.
 - [ ] Separately record physical SD, whole-card media, device/model, Windows-original interoperability, printer, Intel and older-macOS validation gaps.
 
 ## Progress
@@ -32,13 +33,18 @@ Legend: `[x]` verified or explicitly documented; `[ ]` incomplete. Implementatio
 - Goal is in progress, not achieved. Automatic persistence service is not available in this host; this file and the Notion task page preserve checkpoints.
 
 ## Additional discovered features
-- [ ] Recording report and notes: CSV/JSON/PDF, reference-frame contact pages, local notes. New implementation awaits build-6 native verification; not original event-report equivalence.
-- [ ] Same-frame raw acceleration/gyro/event/input search, without guessing physical units or event names.
-- [ ] Whole-input copy to a new regular IMG, free-space preflight, streaming SHA-256 and readback; no raw-device restore.
+- [x] Recording report/notes: CSV/JSON/PDF, reference frames and local notes pass build-6 native tests.
+- [ ] Original event-report semantics and automatic event selection are not established.
+- [x] Same-frame raw acceleration/gyro/event/input search passes core, CLI and GUI-model checks. Physical units and event names remain unresolved.
+- [x] New regular IMG copy, free-space preflight, SHA-256/readback and cancellation cleanup pass core/synthetic packaged-CLI tests; partial-copy refusal tested on real backup.
+- [ ] Full-card real-image copy and physical restore are unverified; raw-device restore is not implemented.
 - [ ] Original PC Browser/PC Viewer BAK reader/writer interoperability.
 - [ ] Weekly recording-standby timetable, person detection/warnings/external output, Wi-Fi/connection-ID dialogs.
 
 ## Latest validation checkpoint
 - Build 5 / Actions 43373263989: 97 tests passed (all original 77 preserved); exact artifact GUI/audio/continuous boundaries and independent AVI tests passed.
 - CFR output is 1,201 frames from 1,200 source packets: 40.0333333 seconds × 30 fps, with a card-clock gap retained. A manual 1,200-frame expectation was corrected, not the time-preserving scheduler.
-- Build-6 attempt 43375508959 compiled and ran all 109 tests, but the new GPS-gap fixture omitted satellite/fix flags and correctly produced no valid GPS. Fixture flags and explicit validity assertions were fixed; expected gap coverage is unchanged. Re-run pending.
+- Build-6 attempt 43375508959 compiled and ran all 109 tests, but the new GPS-gap fixture omitted satellite/fix flags and correctly produced no valid GPS. Fixture flags and explicit validity assertions were fixed; expected gap coverage is unchanged. Re-run 43375913589 passed all 109 tests; no expected value was relaxed.
+- Build 6 exact artifact on new dc Mac: 1,200 real-media frames decode/export; explicit external-GPS synchronization; report CSV/JSON/multipage PDF; 5-second samples and 9-page print PDF; raw-query and notes; continuous 450/900 boundaries and all nine projections passed. First catalog 0.092 s; selected detail 0.122 s on the partial backup. Independent MP4/AVI full decode and PDF structure/text passed. Visual inspection found settings clipping and overly thin PDF text; build-7 fixes and exact-artifact revalidation are in progress.
+
+- Build 7 source: bound/wrap all settings tabs; explicit regular Japanese report typography and unified page numbers. Actions/visual revalidation pending, not yet a verified fix.
