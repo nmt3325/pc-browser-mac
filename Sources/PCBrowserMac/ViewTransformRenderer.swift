@@ -9,10 +9,11 @@ enum ViewTransformRenderer {
         if state.isIdentity { return image }
         let width = image.width, height = image.height
         guard width > 0, height > 0 else { return nil }
-        let space = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+        var space = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+        if let sourceSpace = image.colorSpace, sourceSpace.model == .rgb { space = sourceSpace }
         guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0, space: space,
                                       bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return nil }
-        context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
+        context.setFillColor(color(0, 0, 0, in: space))
         context.fill(CGRect(x: 0, y: 0, width: width, height: height))
         context.interpolationQuality = .high
         let m = state.matrix(width: Double(width), height: Double(height))
@@ -66,16 +67,22 @@ enum ViewTransformRenderer {
         return results
     }
 
+    /// A colour in an explicit colour space. `CGColor(red:green:blue:alpha:)` is Generic RGB, which shifts pure
+    /// red and blue when drawn into an sRGB context, so the self-check never uses it.
+    private static func color(_ red: CGFloat, _ green: CGFloat, _ blue: CGFloat, in space: CGColorSpace) -> CGColor {
+        CGColor(colorSpace: space, components: [red, green, blue, 1]) ?? CGColor(red: red, green: green, blue: blue, alpha: 1)
+    }
+
     private static func quadrantImage(size: Int) -> CGImage? {
         let space = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
         guard let context = CGContext(data: nil, width: size, height: size, bitsPerComponent: 8, bytesPerRow: 0, space: space,
                                       bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return nil }
         let half = CGFloat(size / 2)
         // CoreGraphics origin is bottom-left: the top row of the picture is y in [half, size).
-        context.setFillColor(CGColor(red: 1, green: 0, blue: 0, alpha: 1)); context.fill(CGRect(x: 0, y: half, width: half, height: half))
-        context.setFillColor(CGColor(red: 0, green: 1, blue: 0, alpha: 1)); context.fill(CGRect(x: half, y: half, width: half, height: half))
-        context.setFillColor(CGColor(red: 0, green: 0, blue: 1, alpha: 1)); context.fill(CGRect(x: 0, y: 0, width: half, height: half))
-        context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1)); context.fill(CGRect(x: half, y: 0, width: half, height: half))
+        context.setFillColor(color(1, 0, 0, in: space)); context.fill(CGRect(x: 0, y: half, width: half, height: half))
+        context.setFillColor(color(0, 1, 0, in: space)); context.fill(CGRect(x: half, y: half, width: half, height: half))
+        context.setFillColor(color(0, 0, 1, in: space)); context.fill(CGRect(x: 0, y: 0, width: half, height: half))
+        context.setFillColor(color(1, 1, 1, in: space)); context.fill(CGRect(x: half, y: 0, width: half, height: half))
         return context.makeImage()
     }
 
