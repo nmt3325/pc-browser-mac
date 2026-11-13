@@ -98,7 +98,10 @@ public enum SourceOpener {
         if FileManager.default.fileExists(atPath: url.path, isDirectory: &directory), directory.boolValue {
             return try ArchiveSource(url:url,verifyHash:verifyArchiveHash)
         }
-        return try FileByteSource(url: url)
+        let file = try FileByteSource(url: url)
+        if try file.read(at:0,count:12) == WindowsBackupSource.magic { return try WindowsBackupSource(storage:file) }
+        if url.pathExtension.lowercased() == "bak" { throw BrowserError.invalid("対応するBAKの署名がありません") }
+        return file
     }
 }
 public enum ArchiveWriter {
