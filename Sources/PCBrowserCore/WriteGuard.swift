@@ -61,7 +61,7 @@ public enum DestructiveOperation: String, CaseIterable, Sendable {
         case .updateFirmware:
             return "機器ごとの更新手順と署名の確認ができず、失敗すると機器が使えなくなるおそれがあるため実装しません。"
         case .writeCardSettings:
-            return "SET.INIの各項目の意味が未確定のため、原本カードには書き込みません（新しいファイルへの書き出しのみ）。"
+            return "原本のカード・マウント中のSDカード・読み込んだIMGには書き込みません。録画設定の変更は、記録設定シートが作る新しいIMGコピーにだけ書き出します。"
         }
     }
     public var decision: WriteGuard.Decision { .refused(refusalReason) }
