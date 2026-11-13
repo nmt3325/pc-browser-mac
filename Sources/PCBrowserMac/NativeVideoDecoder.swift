@@ -73,18 +73,27 @@ final class NativeVideoDecoder {
 }
 
 actor FrameRenderer {
-    private let source: FileByteSource
+    private let source: any ByteSource
     private let packets: [FramePacket]
+    private let fps: Int
     private var decoder: NativeVideoDecoder?
     private var last = -1
-    init(source: FileByteSource, packets: [FramePacket]) { self.source = source; self.packets = packets }
+    private var cached: CGImage?
+    init(source: any ByteSource, packets: [FramePacket]) {
+        self.source = source; self.packets = packets
+        fps = packets.compactMap { $0.telemetry.clock?.nominalFPS }.first ?? 30
+    }
     func render(_ index: Int) throws -> CGImage {
         guard packets.indices.contains(index) else { throw BrowserError.invalid("フレーム番号が範囲外です") }
-        if decoder == nil || index != last + 1 {
-            guard let start = stride(from: index, through: 0, by: -1).first(where: { packets[$0].isIntra }) else {
-                throw BrowserError.unsupported("直前のIフレームが見つかりません。次の録画を選択してください")
-            }
-            decoder = NativeVideoDecoder(); last = start - 1
+        if index == last, let cached { return cached }
+        guard let start = stride(from: index, through: 0, by: -1).first(where: { packets[$0].isIntra }) else {
+            throw BrowserError.unsupported("直前のIフレームが見つかりません。次の録画を選択してください")
+        }
+        // Audio-clock playback may skip display frames. Reuse the decoder while
+        // advancing through those P frames instead of repeatedly decoding the GOP.
+        // A later keyframe still makes a large forward seek inexpensive.
+        if decoder == nil || index < last || start > last + 1 {
+            decoder = NativeVideoDecoder(); last = start - 1; cached = nil
         }
         var result: CGImage?
         for i in (last+1)...index {
@@ -93,50 +102,7 @@ actor FrameRenderer {
             result = try decoder!.decode(data, ordinal: i, fps: 30); last = i
         }
         guard let result else { throw BrowserError.io("フレームが取得できません") }
+        cached = result
         return result
-    }
-}
-
-enum InspectionCLI {
-    static func value(_ name: String, in args: [String]) -> String? {
-        guard let i = args.firstIndex(of: name), i+1 < args.count else { return nil }; return args[i+1]
-    }
-    static func run(_ args: [String]) -> Int32 {
-        do {
-            guard let path = value("--inspect", in: args) else { return 64 }
-            let url = URL(fileURLWithPath: path)
-            let before = try FileManager.default.attributesOfItem(atPath: path)
-            let source = try FileByteSource(url: url)
-            let limit = value("--scan-limit", in: args).flatMap(UInt64.init)
-            let result = try ImageScanner.scan(source, limitBytes: limit)
-            var report: [String: Any] = ["source_bytes": source.byteCount, "control_lba": result.control.sector,
-                "first_record_lba": result.control.firstRecordSector, "recordings": result.recordings.count,
-                "validated_frames": result.frameCount, "partial_scan": result.isPartialScan,
-                "rejected_candidates": result.rejectedCandidates, "mode": "O_RDONLY", "scanned_bytes": result.scannedBytes, "timing_note": "Playback timing is provisional; packet field 0x1E8 is not interpreted as FPS."]
-            if args.contains("--decode-check") {
-                var decoded = 0, width = 0, height = 0
-                for recording in result.recordings {
-                    let decoder = NativeVideoDecoder()
-                    guard let first = recording.packets.firstIndex(where: { $0.isIntra }) else { continue }
-                    for (j,p) in recording.packets.enumerated() where j >= first {
-                        let data = try source.read(at: p.payloadOffset, count: p.videoBytes)
-                        let image = try decoder.decode(data, ordinal: j, fps: 30)
-                        width = image.width; height = image.height
-                        if decoded == 0, let png = value("--png", in: args) {
-                            let rep = NSBitmapImageRep(cgImage: image)
-                            guard let bytes = rep.representation(using: .png, properties: [:]) else { throw BrowserError.io("PNGを作成できません") }
-                            try bytes.write(to: URL(fileURLWithPath: png))
-                        }
-                        decoded += 1
-                    }
-                }
-                report["native_videotoolbox_decoded_frames"] = decoded; report["width"] = width; report["height"] = height
-            }
-            let after = try FileManager.default.attributesOfItem(atPath: path)
-            report["input_size_and_mtime_unchanged"] = (before[.size] as? NSNumber) == (after[.size] as? NSNumber) && (before[.modificationDate] as? Date) == (after[.modificationDate] as? Date)
-            let bytes = try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted,.sortedKeys])
-            if let file = value("--report", in: args) { try bytes.write(to: URL(fileURLWithPath: file)) }
-            print(String(decoding: bytes, as: UTF8.self)); return 0
-        } catch { fputs("\(error.localizedDescription)\n", stderr); return 1 }
     }
 }

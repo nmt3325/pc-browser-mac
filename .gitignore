@@ -9,3 +9,15 @@ build/
 *.pcm
 *.bin
 private-fixture*/
+
+# Real card media, private validation output, location tracks and device settings
+*.pcbbackup/
+expanded-private*/
+private-*/
+*.h265
+*.wav
+*.mp4
+*.avi
+*.kml
+*.gpx
+*.zip

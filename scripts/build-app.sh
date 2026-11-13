@@ -17,8 +17,9 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <key>CFBundleDisplayName</key><string>PC Browser Mac</string>
 <key>CFBundleExecutable</key><string>PCBrowserMac</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.1.0</string>
-<key>CFBundleVersion</key><string>1</string>
+<key>CFBundleShortVersionString</key><string>0.2.0</string>
+<key>CFBundleVersion</key><string>2</string>
+<key>CFBundleGetInfoString</key><string>0.2.0-beta.1</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>NSPrincipalClass</key><string>NSApplication</string>
@@ -27,6 +28,10 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <key>CFBundleTypeName</key><string>SD Card Image</string>
 <key>CFBundleTypeExtensions</key><array><string>img</string></array>
 <key>CFBundleTypeRole</key><string>Viewer</string>
+</dict><dict>
+<key>CFBundleTypeName</key><string>PC Browser Mac Selected Recording Backup</string>
+<key>CFBundleTypeExtensions</key><array><string>pcbbackup</string></array>
+<key>CFBundleTypeRole</key><string>Viewer</string><key>LSTypeIsPackage</key><true/>
 </dict></array>
 </dict></plist>
 PLIST

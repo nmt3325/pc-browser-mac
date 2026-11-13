@@ -1,0 +1,178 @@
+{
+  "version": "0.2.0-beta.1",
+  "platform": "macOS 15.7.7, arm64, Swift 6.2.4",
+  "unit_tests": {
+    "count": 48,
+    "failed": 0,
+    "data": "synthetic"
+  },
+  "full_image_linux": {
+    "bytes": 31486640128,
+    "validated_pairs": 439666,
+    "recording_lba_channel_groups": 993,
+    "strict_ffmpeg_sample_frames": 180,
+    "all_frames_decoded": false,
+    "sender_full_hash_provided": false
+  },
+  "partial_fixture_mac": {
+    "audio_format": {
+      "bits": 8,
+      "channels": 1,
+      "sample_rate": 8000
+    },
+    "audio_minus_video_seconds": 0.019999999999999574,
+    "audio_pcm_bytes": 120160,
+    "audio_seconds": 15.02,
+    "backup_hash_verified": true,
+    "backup_roundtrip_frames": 450,
+    "card_clock_used": true,
+    "card_setting_files": 0,
+    "control_lba": 931770,
+    "first_record_lba": 931772,
+    "first_recording_frames": 450,
+    "height": 1080,
+    "input_size_and_mtime_unchanged": true,
+    "metal_projection_modes": {
+      "dome": {
+        "height": 960,
+        "width": 960
+      },
+      "frontRear": {
+        "height": 270,
+        "width": 960
+      },
+      "globe": {
+        "height": 960,
+        "width": 960
+      },
+      "grid16": {
+        "height": 540,
+        "width": 960
+      },
+      "panorama": {
+        "height": 480,
+        "width": 960
+      },
+      "perspective": {
+        "height": 540,
+        "width": 960
+      },
+      "quad": {
+        "height": 540,
+        "width": 960
+      },
+      "raw": {
+        "height": 404,
+        "width": 960
+      },
+      "ring": {
+        "height": 960,
+        "width": 960
+      }
+    },
+    "mode": "O_RDONLY",
+    "movie_export": {
+      "audio_tracks": 1,
+      "duration": 3,
+      "frames": 90,
+      "projection": "perspective",
+      "subtitles": true,
+      "video_tracks": 1
+    },
+    "movie_size": {
+      "height": 720,
+      "width": 1280
+    },
+    "native_audio_prepared": true,
+    "native_audio_seconds": 15.02,
+    "native_videotoolbox_decoded_frames": 1200,
+    "nominal_fps": 30,
+    "partial_scan": true,
+    "raw_sensor_frames": 1200,
+    "recordings": 3,
+    "rejected_candidates": 0,
+    "scanned_bytes": 55454720,
+    "source_bytes": 31486640128,
+    "timeline_seconds": 15,
+    "timing_note": "Card wall clock + nominal frame slots; no invented UTC; duplicate slot boundaries made monotonic.",
+    "valid_gps_frames": 1200,
+    "validated_frames": 1200,
+    "width": 2560
+  },
+  "release_full_recording_movie": {
+    "audio_tracks": 1,
+    "duration": 15,
+    "frames": 450,
+    "projection": "panorama",
+    "subtitles": false,
+    "video_tracks": 1
+  },
+  "release_full_recording_ffprobe": {
+    "programs": [],
+    "stream_groups": [],
+    "streams": [
+      {
+        "codec_name": "aac",
+        "codec_type": "audio",
+        "sample_rate": "8000",
+        "channels": 1,
+        "duration": "15.000000",
+        "nb_frames": "120"
+      },
+      {
+        "codec_name": "h264",
+        "codec_type": "video",
+        "width": 1280,
+        "height": 640,
+        "duration": "15.000000",
+        "nb_frames": "450"
+      }
+    ],
+    "format": {
+      "duration": "15.000000"
+    }
+  },
+  "gui_smoke": {
+    "audio_clock_active_during_playback": true,
+    "audio_prepared": true,
+    "audio_seconds": 15.02,
+    "av_clock_difference_seconds": -0.05366666666666564,
+    "partial_scan": true,
+    "passed": true,
+    "playback_advanced": true,
+    "playback_advanced_to_frame": 76,
+    "preview_height": 720,
+    "preview_width": 1280,
+    "projection_modes": {
+      "dome": true,
+      "frontRear": true,
+      "globe": true,
+      "grid16": true,
+      "panorama": true,
+      "perspective": true,
+      "quad": true,
+      "raw": true,
+      "ring": true
+    },
+    "raw_sensor_points": 2700,
+    "reverse_playback_decreased": true,
+    "route_points": 16,
+    "scope": "Real-media partial backup: GUI/audio/map/projection smoke test; not physical SD",
+    "seek_to_frame_20": true,
+    "validated_frames": 1200,
+    "window_visible": true
+  },
+  "map_tiles_pin_and_route_visually_checked": true,
+  "upright_projection_and_movie_subtitle_visually_checked": true,
+  "physical_sd_end_to_end_tested": false,
+  "private_media_or_coordinates_committed": false,
+  "windows_full_feature_parity": false,
+  "optical_calibration": "Manual equidistant-lens approximation, not manufacturer calibration",
+  "limitations": [
+    "No SD writes, format, password or firmware operations",
+    "Raw IMU scale and axes unresolved",
+    "No AVI or Windows backup generation",
+    "No physical SD, Intel, macOS14 or printer end-to-end test",
+    "No Apple notarization or long-duration AV-sync certification"
+  ]
+}

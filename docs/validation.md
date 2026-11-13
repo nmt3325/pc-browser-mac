@@ -1,3 +1,5 @@
+> v0.1時点の履歴です。最新の追加解析・検証状況は `format-expanded.md` / `validation-expanded.md` を参照。
+
 # 検証記録（preview）
 
 ## 成功した検証

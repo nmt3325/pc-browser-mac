@@ -80,7 +80,9 @@ public struct FramePacket: Identifiable, Sendable {
     public let auxiliaryBytes: Int
     /// Observed as 15 in the sample; NOT established to be a frame rate.
     public let rawField1E8: UInt32
-    public let cardTime: String
+    public let telemetry: PacketTelemetry
+    public var cardTime: String { telemetry.clock?.text ?? "時刻不明" }
+    public var auxiliaryOffset: UInt64 { payloadOffset + UInt64((videoBytes+511)/512*512) }
     public var payloadOffset: UInt64 { (headerSector + 1) * 512 }
     public var isIntra: Bool { codingKind == 2 }
     public static func parse(_ h: Data, sector: UInt64, diskBytes: UInt64) throws -> FramePacket {
@@ -95,10 +97,7 @@ public struct FramePacket: Identifiable, Sendable {
         guard n > 0, n <= 16 * 1024 * 1024, n <= capacity, aux <= 65536,
               (n + 511) / 512 * 512 + aux <= capacity else { throw BrowserError.invalid("映像または補助データの長さが不正です") }
         let rate = try b.le32(0x1E8)
-        let t = try (0xA..<0x10).map { try b.u8($0) }
-        let validTime = (1...12).contains(Int(t[1])) && (1...31).contains(Int(t[2])) && t[3] < 24 && t[4] < 60 && t[5] < 60
-        let time = validTime ? String(format: "%04d-%02d-%02d %02d:%02d:%02d", 2000 + Int(t[0]), Int(t[1]), Int(t[2]), Int(t[3]), Int(t[4]), Int(t[5])) : "時刻不明"
-        return FramePacket(headerSector: sector, trailerSector: tail, sequence: seq, recordSector: try b.le32(0x1B8), channel: try b.u8(8), codingKind: try b.u8(9), videoBytes: Int(n), auxiliaryBytes: Int(aux), rawField1E8: rate, cardTime: time)
+        return FramePacket(headerSector: sector, trailerSector: tail, sequence: seq, recordSector: try b.le32(0x1B8), channel: try b.u8(8), codingKind: try b.u8(9), videoBytes: Int(n), auxiliaryBytes: Int(aux), rawField1E8: rate, telemetry: try PacketTelemetry.parse(h))
     }
 }
 
@@ -128,9 +127,14 @@ public enum ImageScanner {
         let control = try ControlHeader.locate(in: source)
         let start = control.firstRecordSector * 512
         let end = start + min(limitBytes ?? source.byteCount, source.byteCount - start)
+        let ranges = (source.scanRanges ?? [start..<end]).compactMap { r -> Range<UInt64>? in
+            let lo = max(start, r.lowerBound), hi = min(end, r.upperBound)
+            return lo < hi ? lo..<hi : nil
+        }
         var sector = control.firstRecordSector, cacheStart = UInt64.max, cache = Data()
         var groups: [String: Recording] = [:], count = 0, rejected = 0
-        var lastProgress: UInt64 = 0
+        var lastProgress: UInt64 = 0, covered: UInt64 = 0
+        let total = ranges.reduce(UInt64(0)) { $0 + $1.count64 }
         func header(_ offset: UInt64) throws -> Data {
             guard offset <= end, 512 <= end - offset else { throw BrowserError.truncated("走査範囲の終端です") }
             if cacheStart == UInt64.max || offset < cacheStart || offset - cacheStart + 512 > UInt64(cache.count) {
@@ -140,27 +144,51 @@ public enum ImageScanner {
             let i = Int(offset - cacheStart)
             return cache.subdata(in: i..<(i + 512))
         }
-        while sector < end / 512 {
-            if cancelled() { throw BrowserError.io("走査をキャンセルしました") }
-            let offset = sector * 512, h = try header(offset), b = Bytes(h)
-            if try b.le32(0) == 0xFFFFD101 {
-                do {
-                    let packet = try FramePacket.parse(h, sector: sector, diskBytes: source.byteCount)
-                    if packet.trailerSector * 512 + 512 > end { break }
-                    let mirror = try header(packet.trailerSector * 512)
-                    guard try Bytes(mirror).le32(0) == 0xFFFFD102, h.dropFirst(4) == mirror.dropFirst(4) else {
-                        throw BrowserError.invalid("対になるパケットヘッダーが一致しません")
+        for range in ranges {
+            sector = (range.lowerBound + 511) / 512
+            let rangeEnd = range.upperBound / 512
+            let prior = covered
+            while sector < rangeEnd {
+                if cancelled() { throw BrowserError.io("走査をキャンセルしました") }
+                let offset = sector * 512
+                // Inspect cached bytes first. Allocate a 512-byte header only for D101.
+                if cacheStart == UInt64.max || offset < cacheStart || offset - cacheStart + 512 > UInt64(cache.count) {
+                    _ = try header(offset)
+                }
+                let local = Int(offset - cacheStart)
+                let marker: UInt32 = cache.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: local, as: UInt32.self).littleEndian }
+                if marker == 0xFFFFD101 {
+                    do {
+                        let h = cache.subdata(in: local..<(local + 512))
+                        let packet = try FramePacket.parse(h, sector: sector, diskBytes: source.byteCount)
+                        if packet.trailerSector >= rangeEnd { break }
+                        let mirror = try header(packet.trailerSector * 512)
+                        guard try Bytes(mirror).le32(0) == 0xFFFFD102, h.dropFirst(4) == mirror.dropFirst(4) else {
+                            throw BrowserError.invalid("対になるパケットヘッダーが一致しません")
+                        }
+                        let key = "\(packet.recordSector)-\(packet.channel)"
+                        if groups[key] == nil { groups[key] = Recording(id: key, recordSector: packet.recordSector, channel: packet.channel, packets: []) }
+                        groups[key]!.packets.append(packet); count += 1
+                        sector = packet.trailerSector + 1
+                    } catch { rejected += 1; sector += 1 }
+                } else {
+                    let stop = Int(min(UInt64(cache.count), range.upperBound - cacheStart))
+                    let next: Int = cache.withUnsafeBytes { bytes in
+                        var j = local + 512
+                        while j + 512 <= stop {
+                            if bytes.loadUnaligned(fromByteOffset: j, as: UInt32.self).littleEndian == 0xFFFFD101 { return j }
+                            j += 512
+                        }
+                        return j
                     }
-                    let key = "\(packet.recordSector)-\(packet.channel)"
-                    if groups[key] == nil { groups[key] = Recording(id: key, recordSector: packet.recordSector, channel: packet.channel, packets: []) }
-                    groups[key]!.packets.append(packet); count += 1
-                    sector = packet.trailerSector + 1
-                } catch { rejected += 1; sector += 1 }
-            } else { sector += 1 }
-            let covered = min(sector * 512, end) - start
-            if covered - min(covered, lastProgress) >= 8 * 1024 * 1024 {
-                progress(covered, end - start, count); lastProgress = covered
+                    sector = min(rangeEnd, (cacheStart + UInt64(next)) / 512)
+                }
+                covered = prior + min(sector * 512, range.upperBound) - range.lowerBound
+                if covered - min(covered, lastProgress) >= 8 * 1024 * 1024 {
+                    progress(covered, total, count); lastProgress = covered
+                }
             }
+            covered = prior + range.count64
         }
         var recordings: [Recording] = []
         for var recording in groups.values {
@@ -171,10 +199,9 @@ public enum ImageScanner {
             if a.startTime == b.startTime { return a.id < b.id }
             return a.startTime < b.startTime
         }
-        let covered = min(sector * 512, end) - start
-        progress(covered, end - start, count)
+        progress(covered, total, count)
         return ImageIndex(control: control, recordings: recordings, scannedBytes: covered,
-                          isPartialScan: end < source.byteCount, rejectedCandidates: rejected)
+                          isPartialScan: end < source.byteCount || source.isPartialCopy, rejectedCandidates: rejected)
     }
 }
 
@@ -203,3 +230,5 @@ public enum AnnexB {
         return result
     }
 }
+
+private extension Range where Bound == UInt64 { var count64: UInt64 { upperBound - lowerBound } }

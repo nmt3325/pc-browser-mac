@@ -6,9 +6,15 @@ public enum BrowserError: LocalizedError, Equatable {
         switch self { case .invalid(let s),.truncated(let s),.unsupported(let s),.io(let s):return s }
     }
 }
-public protocol ByteSource: AnyObject {
+public protocol ByteSource: AnyObject, Sendable {
     var byteCount: UInt64 { get }
     func read(at offset: UInt64, count: Int) throws -> Data
+    var scanRanges: [Range<UInt64>]? { get }
+    var isPartialCopy: Bool { get }
+}
+public extension ByteSource {
+    var scanRanges: [Range<UInt64>]? { nil }
+    var isPartialCopy: Bool { false }
 }
 public final class MemorySource: ByteSource {
     public let data: Data
