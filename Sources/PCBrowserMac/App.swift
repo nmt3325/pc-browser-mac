@@ -38,7 +38,7 @@ final class ScanCancellation: @unchecked Sendable {
             result["window_visible"] = window?.isVisible ?? false
             result["indexed_frames_estimate"] = index.frameCount
             result["validated_frames"] = index.validatedFrameCount
-            result["continuous_recordings"] = index.recordings.count
+            result["continuous_recordings"] = index.continuousRecordings.count;result["event_recordings"] = index.eventRecordings.count
             result["storage_blocks"] = index.blockCount
             result["first_list_seconds"] = model.firstListSeconds
             result["catalog_seconds"] = model.catalogSeconds

@@ -267,6 +267,21 @@ enum InspectionCLI {
                     }
                 }
             }
+            if args.contains("--lists") {
+                // Event list (trigger names) and the per-second journal; header/journal reads only, never video payload.
+                var lists:[String:Any]=["video_sessions":result.continuousRecordings.count,"device_id":DeviceIdentity.read(from:source,control:result.control) ?? "—"]
+                let events=try EventList.entries(result,source:source)
+                lists["event_count"]=events.count
+                lists["events"]=events.map{(e)->[String:Any] in ["time":e.timeText,"trigger":e.trigger,"device":e.deviceID ?? "—","frames":e.frames,"blocks":e.blocks]}
+                if let layout=result.layout {
+                    lists["layout"]=["normal_end":layout.normalEnd,"event_start":layout.eventStart,"event_end":layout.eventEnd,"journal_first":layout.history?.lowerBound ?? 0,"journal_records":layout.historyRecordCount] as [String:Any]
+                }
+                if let area=result.layout?.history,let log=try HistoryLog.read(source:source,area:area) {
+                    lists["journal"]=["rows":log.rows.count,"sample_records":log.sampleRecords,"marker_records":log.markerRecords,"empty_records":log.emptyRecords,"other_records":log.otherRecords,"newest_slot":log.newestSlot,
+                        "table":log.rows.map{(r)->[Any] in [r.id+1,r.startText,r.durationText,r.kind.rawValue,r.records,r.deviceID ?? "—"]}] as [String:Any]
+                } else { lists["journal"]="unavailable" }
+                report["record_lists"]=lists
+            }
             report["total_seconds"] = ProcessInfo.processInfo.systemUptime-began
             report["input_size_and_mtime_unchanged"] = before == (try snapshot(url))
             let bytes=try JSONSerialization.data(withJSONObject:report,options:[.prettyPrinted,.sortedKeys])
