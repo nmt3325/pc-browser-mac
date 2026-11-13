@@ -47,7 +47,7 @@ final class WindowsBackupTests: XCTestCase {
     }
     func testNonMonotonicTableStorageOrderIsSortedByVirtualAddress() throws {
         let s=try WindowsBackupSource(storage:MemorySource(fixture(reversed:true)))
-        XCTAssertEqual(s.extents.map(\.sourceOffset),[0,8*512]);XCTAssertEqual(try CatalogScanner.scan(s).frameCount,6)
+        XCTAssertEqual(s.extents.map(\.sourceOffset),[UInt64(0),UInt64(8*512)]);XCTAssertEqual(try CatalogScanner.scan(s).frameCount,6)
     }
     func testMissingRangesAreZerosAndReadsCrossExtentBoundaries() throws {
         let s=try WindowsBackupSource(storage:MemorySource(fixture())),d=CatalogTests().fixture(CatalogTests().three)
