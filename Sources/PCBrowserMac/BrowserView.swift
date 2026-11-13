@@ -47,13 +47,26 @@ struct BrowserView: View {
         VStack(alignment:.leading,spacing:0) {
             VStack(alignment:.leading,spacing:6){Label("PC Browser Mac",systemImage:"sdcard").font(.headline);Text(model.sourceName).font(.caption).foregroundStyle(.secondary).lineLimit(2)}.padding(14)
             TextField("日時・CH・録画IDで検索",text:$model.search).textFieldStyle(.roundedBorder).padding(.horizontal,10)
+            Picker("一覧",selection:$model.listKind){ForEach(RecordListKind.allCases){Text($0.title).tag($0)}}.pickerStyle(.segmented).labelsHidden().padding(.horizontal,10).padding(.top,8)
+            if model.listKind == .history {
             HStack {Picker("表示",selection:$model.filter){ForEach(["すべて","GPSあり","音声あり","しおり"],id:\.self){Text($0)}}.labelsHidden();Button{model.descending.toggle()}label:{Image(systemName:model.descending ? "arrow.down":"arrow.up")}.help("日時の並び順")}.padding(10)
             HStack{Text("速度 ≥");TextField("km/h",text:$model.minSpeed).frame(width:70);Text("km/h")}.font(.caption).padding(.horizontal,12).padding(.bottom,8)
             if model.hasDetailFilter && model.hasUnsearchedDetails {
                 VStack(alignment:.leading,spacing:4){Text("未確認の録画も表示中").font(.caption2).foregroundStyle(.secondary);Button("全録画の詳細検索",action:model.searchAllDetails).disabled(model.scanning || model.busy)}.padding(.horizontal,12).padding(.bottom,8)
             }
             HStack{Button("raw検索条件…"){model.settingsTab=3;model.showSettings=true};Spacer();if model.rawQuery.hasConditions{Text("raw条件ON").foregroundStyle(.blue)}}.font(.caption).padding(.horizontal,12).padding(.bottom,8)
+            }
             Divider()
+            switch model.listKind {
+            case .history: recordingList
+            case .event: eventList
+            case .normal: journalList
+            }
+            Divider()
+            HStack{Label("読み取り専用",systemImage:"lock.shield");Spacer();if !model.selectedExports.isEmpty{Text("\(model.selectedExports.count)件選択")}}.font(.caption).foregroundStyle(.secondary).padding(12)
+        }
+    }
+    private var recordingList:some View {
             List(selection:$model.selectedID) {
                 ForEach(model.filteredRecordings){r in
                     HStack(spacing:7) {
@@ -65,8 +78,48 @@ struct BrowserView: View {
                 }
             }
             .disabled(model.scanning || model.busy)
-            Divider()
-            HStack{Label("読み取り専用",systemImage:"lock.shield");Spacer();if !model.selectedExports.isEmpty{Text("\(model.selectedExports.count)件選択")}}.font(.caption).foregroundStyle(.secondary).padding(12)
+    }
+    private var eventList:some View {
+        List(selection:$model.selectedID) {
+            ForEach(model.filteredEvents){e in
+                HStack(spacing:7) {
+                    Toggle("書き出し対象",isOn:Binding(get:{model.selectedExports.contains(e.id)},set:{on in if on{model.selectedExports.insert(e.id)}else{model.selectedExports.remove(e.id)}})).toggleStyle(.checkbox).labelsHidden().help("複数録画のバックアップ・ログ出力対象")
+                    VStack(alignment:.leading,spacing:3) {
+                        HStack{Text(e.timeText).font(.system(.caption,design:.monospaced));Spacer(minLength:4);Text(e.trigger).font(.caption.bold())}
+                        Text("機器 \(e.deviceID ?? "—") · \(e.blocks)ブロック · \(e.frames)枚").font(.caption2).foregroundStyle(.secondary)
+                    }
+                }.padding(.vertical,3).tag(e.id)
+            }
+        }
+        .disabled(model.scanning || model.busy)
+        .overlay {
+            if model.filteredEvents.isEmpty {Text(model.scanning ? "イベントを索引中":"この入力にイベント記録はありません").font(.caption).foregroundStyle(.secondary).padding()}
+        }
+    }
+    private var journalList:some View {
+        VStack(spacing:0) {
+            if model.historyLog != nil {
+                List {
+                    ForEach(model.filteredJournalRows){row in
+                        HStack(spacing:8) {
+                            Text("\(row.id+1)").font(.caption2).monospacedDigit().foregroundStyle(.secondary).frame(width:34,alignment:.trailing)
+                            VStack(alignment:.leading,spacing:2) {
+                                Text(row.startText).font(.system(.caption,design:.monospaced))
+                                Text("期間 \(row.durationText) · \(row.records)記録 · 機器 \(row.deviceID ?? "—")").font(.caption2).foregroundStyle(.secondary)
+                            }
+                            Spacer(minLength:0)
+                            if model.video(for:row) != nil {Button("映像"){model.showVideo(for:row)}.buttonStyle(.borderless).font(.caption).help("この時刻に対応する履歴記録の映像へ移動")}
+                        }.padding(.vertical,2)
+                    }
+                }
+            } else {
+                VStack(spacing:10) {
+                    if model.historyLoading {ProgressView()}
+                    Text(model.historyStatus.isEmpty ? "常時録画の記録を読み取ります":model.historyStatus).font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                    Button("読み込み"){model.loadHistoryIfNeeded()}.disabled(model.historyLoading || model.scanning)
+                }.padding().frame(maxHeight:.infinity)
+            }
+            if model.historyLog != nil {Text(model.historyStatus).font(.caption2).foregroundStyle(.secondary).padding(.vertical,4)}
         }
     }
     private var projectionBar:some View {

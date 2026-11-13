@@ -38,6 +38,11 @@ import PCBrowserCore
     @Published var followMap=true
     @Published var satelliteMap=false
     @Published var search=""
+    @Published var listKind=RecordListKind.history {didSet {if oldValue != listKind,listKind == .normal {loadHistoryIfNeeded()}}}
+    @Published var eventEntries:[EventEntry]=[]
+    @Published var historyLog:HistoryLog?
+    @Published var historyStatus=""
+    @Published var historyLoading=false
     @Published var filter="すべて"
     @Published var descending=false
     @Published var minSpeed=""
@@ -121,7 +126,7 @@ import PCBrowserCore
     var exportFrames:Range<Int> {guard let r=recording,!r.packets.isEmpty else{return 0..<0};return useRange ? max(0,min(inFrame,outFrame))..<min(r.packets.count,max(inFrame,outFrame)+1):0..<r.packets.count}
     var filteredRecordings:[Recording] {
         let s=search.trimmingCharacters(in:.whitespacesAndNewlines),threshold=Double(minSpeed)
-        var rows=(index?.recordings ?? []).filter {r in
+        var rows=(index?.continuousRecordings ?? []).filter {r in
             if !s.isEmpty && !(r.startTime+" "+r.endTime+" "+r.id+" CH\(r.channel)").localizedCaseInsensitiveContains(s){return false}
             if filter=="しおり" && !bookmarks.contains(r.id){return false}
             if filter=="GPSあり",let stats=r.statistics,!stats.hasGPS{return false}
@@ -131,6 +136,39 @@ import PCBrowserCore
             return true
         }
         if descending {rows.reverse()};return rows
+    }
+    var filteredEvents:[EventEntry] {
+        let s=search.trimmingCharacters(in:.whitespacesAndNewlines)
+        var rows=eventEntries.filter{e in s.isEmpty || (e.timeText+" "+e.trigger+" "+(e.deviceID ?? "")).localizedCaseInsensitiveContains(s)}
+        if descending {rows.reverse()};return rows
+    }
+    var filteredJournalRows:[HistoryRow] {
+        let s=search.trimmingCharacters(in:.whitespacesAndNewlines)
+        var rows=(historyLog?.rows ?? []).filter{r in s.isEmpty || (r.startText+" "+r.durationText+" "+(r.deviceID ?? "")).localizedCaseInsensitiveContains(s)}
+        if descending {rows.reverse()};return rows
+    }
+    func video(for row:HistoryRow)->Recording? {historyLog?.matchingRecording(for:row,in:index?.continuousRecordings ?? [])}
+    func showVideo(for row:HistoryRow) {if let r=video(for:row){search="";listKind = .history;selectedID=r.id}}
+    /// The per-second journal behind the event region is read only when its tab is opened (about 150 MB on a full card).
+    func loadHistoryIfNeeded() {
+        guard historyLog==nil,!historyLoading,!scanning,let source,let index else{return}
+        guard let area=index.layout?.history else{historyStatus="この入力には常時録画の記録領域がありません（部分コピー・BAK・領域表が不明な入力）";return}
+        historyLoading=true;historyStatus="常時録画の記録を読み取っています…";let token=generation
+        Task {
+            do {
+                let log=try await Task.detached(priority:.userInitiated){try HistoryLog.read(source:source,area:area)}.value
+                guard generation==token else{return}
+                historyLoading=false;historyLog=log
+                if let log {historyStatus="\(log.rows.count)件 · 秒単位の記録 \(log.sampleRecords)件"} else {historyStatus="常時録画の記録領域がこの入力に含まれていないか、有効な記録がありません"}
+            }catch{guard generation==token else{return};historyLoading=false;historyStatus="常時録画を読み取れませんでした: "+error.localizedDescription}
+        }
+    }
+    private func loadEvents(_ result:ImageIndex,source:any ByteSource,token:UUID) {
+        guard !result.eventRecordings.isEmpty else{return}
+        Task {
+            let rows=try? await Task.detached(priority:.utility){try EventList.entries(result,source:source)}.value
+            if generation==token,let rows {eventEntries=rows}
+        }
     }
     init() {
         if let d=UserDefaults.standard.data(forKey:"pcbrowser.projection"),let p=try? JSONDecoder().decode(ProjectionSettings.self,from:d){projection=p.clamped}
@@ -167,6 +205,7 @@ import PCBrowserCore
         audioPlayer=nil;audioClip=nil;renderer=nil;timeline=RecordingTimeline(packets:[])
         frameIndex=0;scrubber=0;scanning=false;busy=false;progress=0;selectionLoading=false;rendering=false
         selectedExports=[];cardFiles=[];rawQueryResults=[:];route=[];sensors=[];errorMessage=nil
+        eventEntries=[];historyLog=nil;historyStatus="";historyLoading=false;listKind = .history
         useExternalGPS=false;externalGPSTrack=nil;externalGPSStatus="外部ログ未選択";deviceTimeZoneID="";gpsLogOffset=0
         archiveNotice="";cardNotice="";audioStatus="音声なし";audioDuration=0;audioDrift=0;sourceName="未選択"
         firstListSeconds=0;catalogSeconds=0;detailSeconds=0;status="IMGファイルまたはSDカードを選択してください"
@@ -177,11 +216,18 @@ import PCBrowserCore
         if a.runModal() == .alertFirstButtonReturn {load(source,name:sourceName,limit:scanLimit,recovery:true)}
     }
     private func catalogStatus(_ result:ImageIndex)->String {
-        "\(result.recordings.count)件の連続録画 · \(result.blockCount)保存ブロック · \(result.frameCount)フレーム"+(result.isMetadataCatalog ? "（索引概数）":"（照合済み）")+(result.isPartialScan ? " / 部分コピー・一部走査":"")
+        let events=result.eventRecordings.count
+        var text="\(result.continuousRecordings.count)件の連続録画"
+        if events > 0 {text+=" · イベント\(events)件"}
+        text+=" · \(result.blockCount)保存ブロック · \(result.frameCount)フレーム"
+        text+=result.isMetadataCatalog ? "（索引概数）":"（照合済み）"
+        if result.isPartialScan {text+=" / 部分コピー・一部走査"}
+        return text
     }
     private func load(_ source:any ByteSource,name:String,limit:UInt64?=nil,recovery:Bool=false) {
         cancel();generation=UUID();let token=generation,flag=ScanCancellation(),began=ProcessInfo.processInfo.systemUptime;cancellation=flag
         self.source=source;scanLimit=limit;index=nil;selectedID=nil;image=nil;sourceName=name;progress=0;scanning=true;busy=false;errorMessage=nil;selectedExports=[];cardFiles=[];rawQueryResults=[:]
+        eventEntries=[];historyLog=nil;historyStatus="";historyLoading=false;listKind = .history
         useExternalGPS=false;externalGPSTrack=nil;externalGPSStatus="外部ログ未選択";deviceTimeZoneID="";gpsLogOffset=0
         firstListSeconds=0;catalogSeconds=0;detailSeconds=0;archiveNotice=(source as? ArchiveSource)?.isHashVerified == false ? "バックアップSHA-256: 未照合（一覧表示後に照合）":(source is WindowsBackupSource || source is WindowsBackupSet ? "Windows BAK\((source as? WindowsBackupSet).map{"（\($0.parts.count)ファイル）"} ?? ""): 部分コピー・読み取り専用（元形式にSHA-256照合なし）":"")
         status=recovery ? "全領域を読み取り専用で復旧走査しています…":"映像を読み込まずに録画索引を取得しています…"
@@ -205,7 +251,8 @@ import PCBrowserCore
                 var migrated=bookmarks
                 for r in result.recordings where r.blocks.contains(where:{bookmarks.contains("\($0.recordSector)-\($0.channel)")}) {migrated.insert(r.id)}
                 if migrated != bookmarks {bookmarks=migrated;UserDefaults.standard.set(Array(migrated),forKey:bookmarkKey)}
-                selectedID=result.recordings.first?.id
+                selectedID=(result.continuousRecordings.first ?? result.recordings.first)?.id
+                loadEvents(result,source:source,token:token)
                 verifyArchiveIfNeeded(source,token:token)
                 let settings=try? await Task.detached{try CardSettingsReader.read(source)}.value
                 if generation==token {cardFiles=settings ?? []}
