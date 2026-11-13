@@ -186,6 +186,10 @@ public enum CatalogScanner {
         if start < a, a <= b, b < c, c <= diskEnd {
             regions = [start..<min(a,end)]
             if b < end { regions.append(b..<min(c,end)) }
+        } else if a == 0, b == start, b < c, c <= diskEnd {
+            regions = [b..<min(c,end)]            // イベント記録のみ: 常時録画領域なし
+        } else if b == 0, c == 0, start < a, a <= diskEnd {
+            regions = [start..<min(a,end)]        // 常時録画のみ: イベント領域なし
         }
         let available = source.scanRanges?.map { ($0.lowerBound+511)/512..<($0.upperBound/512) }
         if let available {
