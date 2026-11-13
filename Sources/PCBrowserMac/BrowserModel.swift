@@ -66,6 +66,9 @@ import PCBrowserCore
     @Published var settingsTab=0
     @Published var showCapabilities=false
     @Published var showInventory=false
+    @Published var viewMouseMode=ViewMouseMode.standard
+    @Published var viewSelection:CGRect?
+    var viewDragStart:ProjectionSettings?
     @Published var fileListVisible=true
     @Published var legacyModelID=0 {didSet {if oldValue != legacyModelID {saveLegacyPreferences();onTitleChange?()}}}
     @Published var speedUnit=SpeedUnit.kilometersPerHour {didSet {if oldValue != speedUnit {saveLegacyPreferences()}}}

@@ -19,6 +19,18 @@ enum InspectionCLI {
             try data.write(to:URL(fileURLWithPath:path),options:.withoutOverwriting);return 0
         }catch{FileHandle.standardError.write(Data((error.localizedDescription+"\n").utf8));return 1}
     }
+    /// `--view-check <new.json>`: renders a synthetic picture through the flip / rotate / zoom operations and compares pixels.
+    static func viewCheck(_ path:String)->Int32 {
+        let results=ViewTransformRenderer.selfCheck()
+        let passed=results.allSatisfy{$0.passed}
+        let rows=results.map{(r)->[String:Any] in ["name":r.name,"passed":r.passed,"detail":r.detail]}
+        let payload:[String:Any]=["passed":passed,"checks":rows]
+        do {
+            let data=try JSONSerialization.data(withJSONObject:payload,options:[.prettyPrinted,.sortedKeys])
+            try data.write(to:URL(fileURLWithPath:path),options:.withoutOverwriting)
+            return passed ? 0:1
+        }catch{FileHandle.standardError.write(Data((error.localizedDescription+"\n").utf8));return 1}
+    }
     static func run(_ args:[String]) async ->Int32 {
         do {
             guard let path=value("--inspect",in:args) else{return 64}
