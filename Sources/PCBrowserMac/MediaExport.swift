@@ -92,7 +92,7 @@ enum MediaExport {
         var audioClip:AudioClip?
         if options.audio,recording.packets.contains(where:{$0.auxiliaryBytes>0}) {
             let format=try PCMFormat.recordFormat(source:source,recording:recording)
-            audioClip=try AudioClip.load(source:source,packets:recording.packets,format:format)
+            audioClip=try AudioClip.load(source:source,packets:recording.packets,format:format,cancelled:cancelled)
         }
         if let clip=audioClip,base<clip.duration {
             let duration=min(clip.duration-base,timeline.starts[range.upperBound-1]-base+1/timeline.nominalFPS)
