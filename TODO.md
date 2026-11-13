@@ -11,12 +11,12 @@ Legend: `[x]` verified or explicitly documented; `[ ]` incomplete. Implementatio
 ## Implementation checkpoints
 - [x] Motion JPEG / OpenDML AVI plus PCM: core cleanup tests, native 40.0333-second export, 44 forced segments, independent full decode/PCM equality and indexed seeks (build 5).
 - [ ] Long-duration AVI beyond 4 GiB with real media, additional audio formats and destination-full behavior.
-- [ ] Selectable subtitle fields, including honest raw sensor/input overlays where semantics are not yet established.
+- [x] Selectable subtitle fields: core checks and native MP4/AVI raw sensor/input/event overlays verified; physical semantics remain explicitly unknown.
 - [x] Frame/seconds sampling core tests; native CLI exports 12 distinct frames and a 3-page four-frame PDF, visually inspected (build 5).
 - [x] One-frame-per-page native PDF (9 pages from real-media input) and four-frame-per-page PDF (3 pages) generated.
 - [ ] All sampling/printing GUI paths and physical printers.
 - [ ] KML points/routes, color/alpha/width/density controls and explicit external Earth application launch.
-- [ ] Timestamped external NMEA synchronization with explicit device timezone and log offset; no invented UTC timezone.
+- [x] Timestamped external NMEA synchronization: explicit timezone/offset, GUI-model opt-in and no extrapolation verified with synthetic logs; no host-timezone assumption.
 - [ ] Sensor/trigger search and recording-kind semantics, calibrated G/gyro and physical camera identity.
 - [ ] Original optical calibration, VRpn/NIGHT pixel-equivalence and synchronized physical-camera playback.
 - [ ] Windows PC Browser / PC Viewer backup compatibility; full-image clone/restore to new output files.
@@ -24,7 +24,7 @@ Legend: `[x]` verified or explicitly documented; `[ ]` incomplete. Implementatio
 - [ ] Password, erase/format and FW updates: recover exact algorithms; require device-specific confirmation before original media operations.
 
 ## Validation / delivery
-- [x] All original 77 tests preserved; build 6 has 109 passing tests in GitHub Actions, including adverse inputs.
+- [x] All original 77 tests preserved; build 8 has 112 passing tests in GitHub Actions, including adverse inputs.
 - [x] Exact build-6 CI artifact: CLI/GUI checks passed, including old continuous boundaries and new exports. Validation scope remains the private 1,200-frame partial backup plus synthetic inputs, not the full card.
 - [ ] Separately record physical SD, whole-card media, device/model, Windows-original interoperability, printer, Intel and older-macOS validation gaps.
 
@@ -49,4 +49,6 @@ Legend: `[x]` verified or explicitly documented; `[ ]` incomplete. Implementatio
 
 - Build 7 / Actions 43378656035, commit e40b30b9ed9c5ba0dcf0f3f150fb8be2ec91b655: 109 tests passed. Exact signed/ad-hoc arm64 artifact was checksum-verified on the new dc Mac; CLI and GUI regression passed. All nine own-view captures and all five recording-PDF pages were individually inspected: settings wrapping, regular Japanese typography, margins, image captions and unified page numbers passed.
 - Whole-card header-only baseline on that Mac: 34 recordings, 993 blocks, 439,666 estimated frames; first row 0.007590 s, complete catalog 21.319446 s, 152,400 512-byte reads. No video/PCM loaded. This is not full-card real-media validation.
-- Build 8 source: retain every forward header/trailer check but defer intermediate telemetry expansion until published/final block boundaries. Add an observable boundary-parse counter and three regression cases (600-frame fallback, corrupt intermediate pair, explicit scan limit). Actions and exact-artifact performance/native validation pending.
+- Build 8 / Actions 43381381704, commit e5d424d2e7993a55628016b463b51dccc08930d4: 112 tests, zero failures. Retains every forward pair check while expanding telemetry only at published/final boundaries. Exact artifact checksum/commit/build/signature, 1,200-frame media, exports, GUI continuous boundaries and all nine projections passed on the new dc Mac; main own-view capture inspected.
+- Interleaved header-only comparison, three runs each: build-7 catalog 19.182/15.504/11.987 s; build-8 17.609/13.102/12.348 s. Catalog IDs, all block LBAs/counts/ordinals, 152,400 reads and input size/mtime match. Medians 15.504 vs 13.102 s, but strong cache/time variance and the final pair reversing prevent an isolated speedup claim. First-row median 0.002123 s.
+- Native sample of build 8 shows the active scanner mostly waiting in pread. Next checkpoint: recover/verify original control/block references rather than relaxing pair validation or adding a stale persistent cache. Whole-card media and physical SD remain unverified.

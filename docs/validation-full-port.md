@@ -33,11 +33,23 @@ Actual settings-sheet images exposed intrinsic-width clipping of long Form label
 - Individually inspected all nine own-NSView captures: main, report, five settings tabs and two scroll endpoints. Labels/help wrap; controls fit the finite sheet; bottom controls remain reachable. Captures do not bypass screen-recording permission.
 - Individually inspected all five report-PDF pages: regular Japanese body face, readable headings, no clipped notes/end marker, correct portrait/landscape image captions and global page footers 1/5 through 5/5. PDF text extraction confirms every note and end marker. No physical-printer validation is implied.
 
-## Whole-card header catalog optimization — build 8 pending
+## Whole-card header catalog optimization — build 8 verified within scope
 
 Build 7 on a sparse, header-only fixture from the complete card found 34 recordings, 993 blocks and an estimated 439,666 frames. First row: 0.007590 seconds; complete catalog: 21.319446 seconds; reads: 152,400 × 512 bytes (78,028,800 bytes). There were no loaded recordings or decoded media frames; this fixture contains no H.264 or PCM payload. File size and mtime remained unchanged.
 
-Build 8 retains every forward pair/identity/span/length check while expanding telemetry only for first and published/final boundaries, retaining at most one pending 512-byte header per block. The new `catalog_boundary_parses` diagnostic and three appended regression tests check non-linear telemetry work, corrupt intermediate pairs and accurate boundaries at an explicit scan limit. CI, exact-output comparison and native timing are pending; no performance improvement is claimed yet.
+Build 8 retains every forward pair/identity/span/length check while expanding telemetry only for first and published/final boundaries, retaining at most one pending 512-byte header per block. The new `catalog_boundary_parses` diagnostic and three appended regression tests check non-linear telemetry work, corrupt intermediate pairs and accurate boundaries at an explicit scan limit. [Actions 43381381704](https://github.com/nmt3325/pc-browser-mac/actions/runs/43381381704), commit `e5d424d2e7993a55628016b463b51dccc08930d4`: all 112 tests passed, including the original 109 and the three new cases. App ZIP SHA-256 `ff4ef329cffa2ef8b383a3d3a51e1bfeb80dc15d3d78f792b740b0f8e6d4afab`; exact source ZIP `d94d934de6530dfa1cd9635fe6b53fb07a1c3d84bbef82eef59660afd9c1d57f`. Outer artifact digest, every inner checksum, recorded source commit, bundle build 8 and strict code-sign verification passed on the new dc Mac.
+
+Interleaved old/new runs, three per build, retained identical complete catalog IDs, block LBAs, counts and cumulative ordinals. All 152,400 header reads, zero loaded/validated media frames and unchanged input size/mtime were retained. Times in seconds:
+
+| Run | Build 7 | Build 8 |
+| --- | ---: | ---: |
+| 1 | 19.181999 | 17.609111 |
+| 2 | 15.503514 | 13.102254 |
+| 3 | 11.987190 | 12.347951 |
+
+Medians: 15.503514 vs 13.102254 seconds. New first-row median: 0.002123 seconds. Cache/time variance is material: both builds get faster over the sequence and the final pair reverses. These are not cache-isolated physical-SD measurements and are not evidence of a large or guaranteed speedup. Boundary telemetry expansions are 2,097 / 2,068 / 2,065 (publication timing-dependent), rather than every intermediate frame. A native `sample` run shows the active scanner predominantly in `pread`, so the next optimization investigation targets verified structural IO references, not unchecked skipping.
+
+Exact build-8 native CLI and GUI regression also passed on the same 1,200-frame private partial backup: all source video frames, MP4/AAC, short 91-frame AVI/PCM, explicit external NMEA plus timezone refusal, raw query, notes/CSV/JSON/five-page report, nine interval samples and nine-page print PDF. GUI playback crosses 450/900 without changing recordings; all nine projections, audio clock, raw query/notes and external-GPS opt-in passed. Main own-view capture was individually inspected (no new clipping). Partial-copy refusal and original size/mtime checks passed. Partial-fixture GUI catalog 0.048353 s, selected detail 0.100311 s; these are not whole-card timings. Build-7's all-nine-view/five-PDF-page visual inspection above remains a separate checkpoint; not every build-8 PDF page was manually re-inspected.
 
 ## Explicit remaining gaps
 
