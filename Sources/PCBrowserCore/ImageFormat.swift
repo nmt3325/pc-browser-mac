@@ -51,6 +51,12 @@ public struct ControlHeader: Sendable {
     public let sector: UInt64
     public let firstRecordSector: UInt64
     public static let legacySector: UInt64 = 0xE37BA
+    /// First record sector from the region table. A card set to イベント記録 only has an empty normal region (start 0), so its recordings
+    /// begin at the event region's start.
+    public static func firstRecordSector(inControl h: Data) throws -> UInt64 {
+        let b = Bytes(h), normal = UInt64(try b.le32(0x1BE))
+        return normal != 0 ? normal : UInt64(try b.le32(0x1C6))
+    }
     public static func locate(in source: ByteSource) throws -> ControlHeader {
         let mbr = try source.read(at: 0, count: 512)
         let parts = try PartitionTable.parse(mbr, diskBytes: source.byteCount)
@@ -60,7 +66,7 @@ public struct ControlHeader: Sendable {
             guard lba < source.byteCount / 512 else { continue }
             let h = try source.read(at: lba * 512, count: 512)
             guard h.subdata(in: 1..<18) == marker, h.subdata(in: 0x1EC..<0x1FD) == marker else { continue }
-            let first = UInt64(try Bytes(h).le32(0x1BE))
+            let first = try firstRecordSector(inControl: h)
             guard first > lba, first < source.byteCount / 512 else { continue }
             return ControlHeader(sector: lba, firstRecordSector: first)
         }

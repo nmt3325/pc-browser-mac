@@ -37,14 +37,24 @@ public struct DiskLayout: Sendable, Equatable {
         self.normalEnd = normalEnd; self.eventStart = eventStart; self.eventEnd = eventEnd; self.history = history
     }
     /// Fails (and the caller keeps its generic whole-disk behaviour) unless every bound is ordered and inside the disk.
+    /// A card set to 常時録画 only has no event region (start = end = 0); one set to イベント記録 only has no normal region (start = end = 0).
     public init?(control: Data, firstRecordSector: UInt64, diskSectors: UInt64) {
         guard control.count == 512 else { return nil }
         let b = Bytes(control)
         func word(_ o: Int) -> UInt64? { (try? b.le32(o)).map { UInt64($0) } }
-        guard let a = word(0x1C2), let e0 = word(0x1C6), let e1 = word(0x1CA),
-              firstRecordSector < a, a <= e0, e0 < e1, e1 <= diskSectors else { return nil }
+        guard let n0 = word(0x1BE), let a = word(0x1C2), let e0 = word(0x1C6), let e1 = word(0x1CA) else { return nil }
+        let normalEmpty = n0 == 0 && a == 0, eventEmpty = e0 == 0 && e1 == 0
+        guard !(normalEmpty && eventEmpty) else { return nil }
+        if !normalEmpty { guard firstRecordSector < a else { return nil } }
+        var journalFloor = a
+        if !eventEmpty {
+            guard (normalEmpty ? firstRecordSector <= e0 : a <= e0), e0 < e1, e1 <= diskSectors else { return nil }
+            journalFloor = e1
+        } else {
+            guard a <= diskSectors else { return nil }
+        }
         var journal: Range<UInt64>?
-        if let h0 = word(0x1CE), let h1 = word(0x1D2), h0 >= e1, h0 <= h1, h1 < diskSectors, h1 - h0 < 2_000_000 {
+        if let h0 = word(0x1CE), let h1 = word(0x1D2), h0 >= journalFloor, h0 <= h1, h1 < diskSectors, h1 - h0 < 2_000_000 {
             journal = h0..<(h1 + 1)
         }
         self.init(normalEnd: a, eventStart: e0, eventEnd: e1, history: journal)
