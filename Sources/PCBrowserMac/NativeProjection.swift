@@ -18,11 +18,17 @@ final class NativeProjection {
         guard let fn=lib.makeFunction(name:"project") else {throw BrowserError.io("360°補正シェーダーを作成できません")}
         pipeline=try d.makeComputePipelineState(function:fn)
     }
+    /// Re-projects the frame, then applies the display flip / rotation / zoom state (right-click menu) with CoreGraphics.
     func render(_ image: CGImage, settings: ProjectionSettings, width requested: Int = 1280) throws -> CGImage {
         let s=settings.clamped
+        let projected=try project(image,settings:s,width:requested)
+        return s.view.isIdentity ? projected:(ViewTransformRenderer.apply(projected,s.view) ?? projected)
+    }
+    private func project(_ image: CGImage, settings s: ProjectionSettings, width requested: Int) throws -> CGImage {
         if s.mode == .raw && s.roll == 0 && s.rawZoom == 1 && !s.night && s.exposure == 0 {return image}
         let aspect=s.mode == .raw ? Double(image.width)/Double(image.height):s.mode.aspect
-        let w=max(64,min(4096,requested)), h=max(64,Int(Double(w)/aspect)/2*2)
+        // A zoomed view crops the result, so render wider to keep it sharp (capped at 4096).
+        let w=max(64,min(4096,Int(Double(requested)*min(4,s.view.zoom)))), h=max(64,Int(Double(w)/aspect)/2*2)
         let input=try loader.newTexture(cgImage:image,options:[.SRGB:false,.origin:MTKTextureLoader.Origin.topLeft])
         let desc=MTLTextureDescriptor.texture2DDescriptor(pixelFormat:.rgba8Unorm,width:w,height:h,mipmapped:false)
         desc.usage=[.shaderWrite,.shaderRead];desc.storageMode = .shared

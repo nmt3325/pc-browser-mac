@@ -17,7 +17,34 @@ public struct ProjectionSettings: Sendable, Codable, Equatable {
     public var lensFOV = 190.0, frontRotation = -90.0, rearRotation = -90.0
     public var radiusScale = 0.98, frontCenterX = 0.25, frontCenterY = 0.5, rearCenterX = 0.75, rearCenterY = 0.5
     public var night = false, exposure = 0.0, rawZoom = 1.0
+    /// Flip / rotation / zoom of the displayed picture (original right-click menu state).
+    public var view = ViewTransform()
     public init() {}
+    private enum CodingKeys: String, CodingKey {
+        case mode, yaw, pitch, roll, fieldOfView, lensFOV, frontRotation, rearRotation, radiusScale
+        case frontCenterX, frontCenterY, rearCenterX, rearCenterY, night, exposure, rawZoom, view
+    }
+    /// Older saved settings lack newer keys; every key is optional so they still load.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        if let v = try c.decodeIfPresent(ProjectionMode.self, forKey: .mode) { mode = v }
+        if let v = try c.decodeIfPresent(Double.self, forKey: .yaw) { yaw = v }
+        if let v = try c.decodeIfPresent(Double.self, forKey: .pitch) { pitch = v }
+        if let v = try c.decodeIfPresent(Double.self, forKey: .roll) { roll = v }
+        if let v = try c.decodeIfPresent(Double.self, forKey: .fieldOfView) { fieldOfView = v }
+        if let v = try c.decodeIfPresent(Double.self, forKey: .lensFOV) { lensFOV = v }
+        if let v = try c.decodeIfPresent(Double.self, forKey: .frontRotation) { frontRotation = v }
+        if let v = try c.decodeIfPresent(Double.self, forKey: .rearRotation) { rearRotation = v }
+        if let v = try c.decodeIfPresent(Double.self, forKey: .radiusScale) { radiusScale = v }
+        if let v = try c.decodeIfPresent(Double.self, forKey: .frontCenterX) { frontCenterX = v }
+        if let v = try c.decodeIfPresent(Double.self, forKey: .frontCenterY) { frontCenterY = v }
+        if let v = try c.decodeIfPresent(Double.self, forKey: .rearCenterX) { rearCenterX = v }
+        if let v = try c.decodeIfPresent(Double.self, forKey: .rearCenterY) { rearCenterY = v }
+        if let v = try c.decodeIfPresent(Bool.self, forKey: .night) { night = v }
+        if let v = try c.decodeIfPresent(Double.self, forKey: .exposure) { exposure = v }
+        if let v = try c.decodeIfPresent(Double.self, forKey: .rawZoom) { rawZoom = v }
+        if let v = try c.decodeIfPresent(ViewTransform.self, forKey: .view) { view = v }
+    }
     public var clamped: ProjectionSettings {
         var s=self
         func clip(_ x:Double,_ lo:Double,_ hi:Double,_ fallback:Double)->Double { x.isFinite ? min(hi,max(lo,x)):fallback }
@@ -25,7 +52,32 @@ public struct ProjectionSettings: Sendable, Codable, Equatable {
         s.lensFOV=clip(lensFOV,180,220,190);s.frontRotation=clip(frontRotation,-180,180,-90);s.rearRotation=clip(rearRotation,-180,180,-90)
         s.radiusScale=clip(radiusScale,0.5,1.3,0.98);s.frontCenterX=clip(frontCenterX,0,0.5,0.25);s.rearCenterX=clip(rearCenterX,0.5,1,0.75)
         s.frontCenterY=clip(frontCenterY,0,1,0.5);s.rearCenterY=clip(rearCenterY,0,1,0.5)
-        s.exposure=clip(exposure,-2,3,0);s.rawZoom=clip(rawZoom,1,4,1);return s
+        s.exposure=clip(exposure,-2,3,0);s.rawZoom=clip(rawZoom,1,4,1);s.view=view.clamped;return s
+    }
+    /// 周囲カメラ表示調整 › 移動: shifts both lens circles by fractions of the source picture.
+    public mutating func moveLensCircles(dx: Double, dy: Double) {
+        guard dx.isFinite, dy.isFinite else { return }
+        frontCenterX += dx; rearCenterX += dx; frontCenterY += dy; rearCenterY += dy
+        self = clamped
+    }
+    /// 周囲カメラ表示調整 › 大きさ: scales the lens circle radius.
+    public mutating func scaleLensCircles(by factor: Double) {
+        guard factor.isFinite, factor > 0 else { return }
+        radiusScale *= factor
+        self = clamped
+    }
+    /// 周囲カメラ表示調整 › 標準に戻す.
+    public mutating func resetLensCircles() {
+        let defaults = ProjectionSettings()
+        frontCenterX = defaults.frontCenterX; frontCenterY = defaults.frontCenterY
+        rearCenterX = defaults.rearCenterX; rearCenterY = defaults.rearCenterY
+        radiusScale = defaults.radiusScale
+    }
+    /// 標準に戻す: flip, rotation, zoom and the manual viewing direction return to their defaults.
+    public mutating func resetViewOperations() {
+        let defaults = ProjectionSettings()
+        view = defaults.view; yaw = defaults.yaw; pitch = defaults.pitch; roll = defaults.roll
+        fieldOfView = defaults.fieldOfView; rawZoom = defaults.rawZoom
     }
 }
 public enum ProjectionMath {

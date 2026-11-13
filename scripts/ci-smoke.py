@@ -119,13 +119,20 @@ def main():
         assert next(e for e in entries if e['id'] == 370)['status'] == 'refusedByPolicy'
         again = subprocess.run([str(binary), '--legacy-inventory', str(inventory_path)], capture_output=True, text=True, timeout=60)
         assert again.returncode != 0, 'inventory output must not overwrite an existing file'
+        # Display operations (flip / rotate / zoom / pan) rendered with CoreGraphics and compared pixel by pixel.
+        view_path = root / 'view-check.json'
+        view_run = subprocess.run([str(binary), '--view-check', str(view_path)], capture_output=True, text=True, timeout=60)
+        view_report = json.loads(view_path.read_text()) if view_path.exists() else {'passed': False, 'checks': []}
+        assert view_run.returncode == 0 and view_report['passed'], (view_run.stderr, [c for c in view_report['checks'] if not c['passed']])
+        assert {c['name'] for c in view_report['checks']} >= {'flipHorizontal', 'flipVertical', 'rotateClockwise90', 'areaZoomTopLeft', 'zoom2PanRight'}
     summary = {'passed': True, 'scope': 'Generated synthetic headers only; no H.264/PCM decoding, GUI, physical SD or private media',
                'continuous_recordings': 1, 'storage_blocks': 3, 'indexed_frames': 6,
                'catalog_validated_frames': results[0]['validated_frames'],
                'lazy_loaded_validated_frames': results[1]['validated_frames'], 'input_sha256_unchanged': unchanged,
                'raw_search_no_video_decode': True, 'report_csv_json': True, 'image_copy_sha256_readback': True,
                'existing_copy_and_invalid_query_refused': True,
-               'legacy_inventory_commands': inventory['commands'], 'legacy_inventory_statuses': inventory['statuses']}
+               'legacy_inventory_commands': inventory['commands'], 'legacy_inventory_statuses': inventory['statuses'],
+               'view_transform_pixel_checks': len(view_report['checks'])}
     output.write_text(json.dumps(summary, indent=2) + '\n')
     print(json.dumps(summary))
 
