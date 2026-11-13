@@ -41,6 +41,9 @@ import PCBrowserCore
     @Published var filter="すべて"
     @Published var descending=false
     @Published var minSpeed=""
+    @Published var rawQuery = RawSensorQuery() { didSet { if oldValue != rawQuery { resetRawSearch() } } }
+    @Published var rawQueryResults: [String: Bool] = [:]
+    @Published var showReport = false
     @Published var selectedExports=Set<String>()
     @Published var bookmarks=Set<String>()
     @Published var inFrame=0
@@ -60,6 +63,7 @@ import PCBrowserCore
     @Published var gpsLogOffset = 0.0 { didSet { updateRoute() } }
     @Published var exportSubtitles=true
     @Published var showSettings=false
+    @Published var settingsTab=0
     @Published var showCapabilities=false
     @Published var cardFiles:[CardFile]=[]
     @Published var route:[GeoCoordinate]=[]
@@ -81,8 +85,8 @@ import PCBrowserCore
     private var bookmarkKey="pcbrowser.bookmarks"
     var selectedSummary:Recording? {index?.recordings.first{$0.id==selectedID}}
     var recording:Recording? {guard let r=selectedSummary,r.isLoaded else{return nil};return r}
-    var hasUnsearchedDetails:Bool {index?.recordings.contains{$0.statistics==nil} ?? false}
-    var hasDetailFilter:Bool {filter=="GPSあり" || filter=="音声あり" || Double(minSpeed) != nil}
+    var hasUnsearchedDetails:Bool {index?.recordings.contains{$0.statistics==nil || rawQuery.hasConditions && rawQueryResults[$0.id]==nil} ?? false}
+    var hasDetailFilter:Bool {rawQuery.hasConditions || filter=="GPSあり" || filter=="音声あり" || Double(minSpeed) != nil}
     var packet:FramePacket? {guard let r=recording,r.packets.indices.contains(frameIndex) else{return nil};return r.packets[frameIndex]}
     var gpsSynchronization: GPSLogSynchronization? {
         guard useExternalGPS, let track = externalGPSTrack, let zone = TimeZone(identifier: deviceTimeZoneID), gpsLogOffset.isFinite else { return nil }
@@ -112,6 +116,7 @@ import PCBrowserCore
             if filter=="しおり" && !bookmarks.contains(r.id){return false}
             if filter=="GPSあり",let stats=r.statistics,!stats.hasGPS{return false}
             if filter=="音声あり",let stats=r.statistics,!stats.hasAudio{return false}
+            if rawQuery.hasConditions,rawQueryResults[r.id]==false{return false}
             if let threshold,threshold.isFinite,let stats=r.statistics,(stats.maximumSpeedKMH ?? -1)<threshold{return false}
             return true
         }
@@ -149,7 +154,7 @@ import PCBrowserCore
     }
     private func load(_ source:any ByteSource,name:String,limit:UInt64?=nil,recovery:Bool=false) {
         cancel();generation=UUID();let token=generation,flag=ScanCancellation(),began=ProcessInfo.processInfo.systemUptime;cancellation=flag
-        self.source=source;scanLimit=limit;index=nil;selectedID=nil;image=nil;sourceName=name;progress=0;scanning=true;busy=false;errorMessage=nil;selectedExports=[];cardFiles=[]
+        self.source=source;scanLimit=limit;index=nil;selectedID=nil;image=nil;sourceName=name;progress=0;scanning=true;busy=false;errorMessage=nil;selectedExports=[];cardFiles=[];rawQueryResults=[:]
         useExternalGPS=false;externalGPSTrack=nil;externalGPSStatus="外部ログ未選択";deviceTimeZoneID="";gpsLogOffset=0
         firstListSeconds=0;catalogSeconds=0;detailSeconds=0;archiveNotice=(source as? ArchiveSource)?.isHashVerified == false ? "バックアップSHA-256: 未照合（一覧表示後に照合）":""
         status=recovery ? "全領域を読み取り専用で復旧走査しています…":"映像を読み込まずに録画索引を取得しています…"
@@ -191,20 +196,31 @@ import PCBrowserCore
     }
     func searchAllDetails() {
         guard let source,let index,!scanning,!busy else{return}
-        let summaries=index.recordings.filter{$0.statistics==nil},token=generation,flag=ScanCancellation();guard !summaries.isEmpty else{return}
-        pause();busy=true;progress=0;exportCancellation=flag;status="GPS・音声・最高速度の詳細索引を取得しています（映像本体は読み込みません）…"
+        let query=rawQuery,results=rawQueryResults
+        let summaries=index.recordings.filter{$0.statistics==nil || query.hasConditions && results[$0.id]==nil},token=generation,flag=ScanCancellation();guard !summaries.isEmpty else{return}
+        pause();busy=true;progress=0;exportCancellation=flag;status="GPS・音声・速度・センサーrawの詳細索引を取得しています（映像本体は読み込みません）…"
         Task {
             do {
                 for (i,summary) in summaries.enumerated() {
-                    let detail=try await Task.detached(priority:.utility){try CatalogScanner.loadRecording(summary,source:source,cancelled:{flag.cancelled})}.value
+                    let detail=try await Task.detached(priority:.utility){() throws -> (RecordingStatistics?,Bool) in
+                        let r=try CatalogScanner.loadRecording(summary,source:source,cancelled:{flag.cancelled})
+                        return (r.statistics,r.packets.contains(where:query.matches))
+                    }.value
                     guard generation==token else{return}
-                    if let position=self.index?.recordings.firstIndex(where:{$0.id==summary.id}){self.index?.recordings[position].statistics=detail.statistics}
+                    guard query==rawQuery else{busy=false;progress=0;status="検索条件が変わりました。詳細検索を再実行してください";return}
+                    if let position=self.index?.recordings.firstIndex(where:{$0.id==summary.id}){self.index?.recordings[position].statistics=detail.0}
+                    if query.hasConditions{rawQueryResults[summary.id]=detail.1}
                     progress=Double(i+1)/Double(summaries.count)
                 }
-                status="全録画のGPS・音声・速度の詳細検索を準備しました"
+                status="全録画のGPS・音声・速度・センサーrawの詳細検索を準備しました"
             }catch{guard generation==token else{return};status=flag.cancelled ? "詳細検索をキャンセルしました":"詳細検索を完了できませんでした";if !flag.cancelled{errorMessage=error.localizedDescription}}
             if generation==token{busy=false;progress=0}
         }
+    }
+    private func resetRawSearch() {
+        rawQueryResults=[:]
+        guard rawQuery.hasConditions else{return}
+        for r in index?.recordings ?? [] where r.isLoaded {rawQueryResults[r.id]=r.packets.contains(where:rawQuery.matches)}
     }
     private func prepareSelection() {
         pause();audioTask?.cancel();selectionCancellation.cancel();selectionGeneration=UUID();let token=selectionGeneration,flag=ScanCancellation();selectionCancellation=flag
@@ -222,6 +238,7 @@ import PCBrowserCore
         }
     }
     private func installSelection(_ r:Recording,source:any ByteSource,token:UUID,flag:ScanCancellation) {
+        if rawQuery.hasConditions {rawQueryResults[r.id]=r.packets.contains(where:rawQuery.matches)}
         renderer=FrameRenderer(source:source,packets:r.packets);timeline=RecordingTimeline(packets:r.packets);playbackFPS=timeline.nominalFPS
         inFrame=0;outFrame=max(0,r.packets.count-1);useRange=false;updateRoute();sensors=SensorSample.make(r,timeline:timeline)
         let first=r.packets.firstIndex(where:{$0.isIntra}) ?? 0;Task{await renderFrame(first)}
