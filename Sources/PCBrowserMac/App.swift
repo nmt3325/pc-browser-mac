@@ -11,14 +11,12 @@ final class ScanCancellation: @unchecked Sendable {
 @MainActor final class AppDelegate: NSObject, NSApplicationDelegate {
     let model=BrowserModel()
     var window: NSWindow?
+    var legacyMenu: LegacyMenuController?
     func applicationDidFinishLaunching(_ notification: Notification) {
-        let menu=NSMenu();let root=NSMenuItem();let appMenu=NSMenu();root.submenu=appMenu;menu.addItem(root)
-        appMenu.addItem(withTitle:"PC Browser Macを終了",action:#selector(NSApplication.terminate(_:)),keyEquivalent:"q")
-        let file=NSMenuItem();let fileMenu=NSMenu(title:"ファイル");file.submenu=fileMenu;menu.addItem(file)
-        let open=NSMenuItem(title:"IMGを開く…",action:#selector(openImage),keyEquivalent:"o");open.target=self;fileMenu.addItem(open)
-        NSApp.mainMenu=menu
+        let controller=LegacyMenuController(model:model);legacyMenu=controller;NSApp.mainMenu=controller.buildMainMenu()
+        model.onTitleChange={[weak self] in guard let self else{return};self.window?.title=self.model.windowTitle}
         let w=NSWindow(contentRect:NSRect(x:0,y:0,width:1320,height:880),styleMask:[.titled,.closable,.miniaturizable,.resizable],backing:.buffered,defer:false)
-        w.title="PC Browser Mac — 読み取り専用";w.minSize=NSSize(width:1080,height:760)
+        w.title=model.windowTitle;w.minSize=NSSize(width:1080,height:760)
         w.contentView=NSHostingView(rootView:BrowserView(model:model));w.center();w.makeKeyAndOrderFront(nil);window=w
         NSApp.activate(ignoringOtherApps:true)
         let args=CommandLine.arguments
@@ -180,6 +178,52 @@ final class ScanCancellation: @unchecked Sendable {
             guard !application.isTerminated else{throw BrowserError.io("Google Earthが起動直後に終了しました")}
             result["earth_launch"]=["explicit_opt_in":true,"bundle_identifier":application.bundleIdentifier ?? "","process_id":application.processIdentifier,"kml":kml.lastPathComponent,"scope":"LaunchServices open completion; verify Earth document UI separately"] as [String:Any]
         }
+        try await checkLegacyMenu(result:&result,folder:folder)
+    }
+    /// Verifies the original-command menu bar and exercises the non-modal commands.
+    private func checkLegacyMenu(result:inout [String:Any],folder:URL) async throws {
+        guard let controller=legacyMenu,let main=NSApp.mainMenu else{throw BrowserError.io("原版メニューが作成されていません")}
+        let tags=Set(LegacyMenuController.allItems(in:main).filter{$0.action == #selector(LegacyMenuController.legacyCommand(_:))}.map(\.tag))
+        let required=LegacyMenuInventory.all.filter{LegacyMenuInventory.menuBarGroups.contains($0.group)}.map(\.id)
+        let missing=required.filter{!tags.contains($0)}
+        guard missing.isEmpty else{throw BrowserError.io("原版メニューIDが不足しています: \(missing)")}
+        guard LegacyModelCatalog.all.allSatisfy({controller.menuItem(tag:$0.commandID) != nil}) else{throw BrowserError.io("機種選択メニューが不足しています")}
+        func checked(_ id:Int)->Bool{guard let item=controller.menuItem(tag:id) else{return false};_=controller.validateMenuItem(item);return item.state == .on}
+        let oldUnit=model.speedUnit,oldScale=model.sensorScale,oldMap=model.showMap,oldModel=model.legacyModelID,oldMode=model.projection.mode,oldVisible=model.fileListVisible
+        controller.dispatch(384);guard model.speedUnit == .knots,checked(384),!checked(380) else{throw BrowserError.io("knot表示メニューが反映されません")}
+        controller.dispatch(380);guard model.speedUnit == .kilometersPerHour,checked(380) else{throw BrowserError.io("GPS速度メニューが反映されません")}
+        for scale in GSensorScale.allCases{controller.dispatch(scale.commandID);guard model.sensorScale == scale,checked(scale.commandID) else{throw BrowserError.io("センサースケールメニューが反映されません")}}
+        controller.dispatch(383);guard !model.showMap,checked(383) else{throw BrowserError.io("地図非表示メニューが反映されません")}
+        controller.dispatch(382);guard model.showMap,checked(382) else{throw BrowserError.io("地図表示メニューが反映されません")}
+        for model_ in LegacyModelCatalog.all{controller.dispatch(model_.commandID);guard model.legacyModelID == model_.commandID,window?.title == model_.windowTitle+" — Mac 読み取り専用",checked(model_.commandID) else{throw BrowserError.io("機種選択メニューが反映されません: \(model_.name)")}}
+        for (id,mode) in LegacyMenuController.singleScreenModes{controller.dispatch(id);guard model.projection.mode == mode,checked(id) else{throw BrowserError.io("周囲カメラ表示メニューが反映されません: \(id)")}}
+        controller.dispatch(311);guard model.projection.mode == .grid16 else{throw BrowserError.io("16分割表示メニューが反映されません")}
+        controller.dispatch(310);guard model.projection.mode == .perspective else{throw BrowserError.io("1画面表示メニューが反映されません")}
+        controller.dispatch(304);guard !model.fileListVisible,!checked(304) else{throw BrowserError.io("ファイルリスト表示メニューが反映されません")}
+        controller.dispatch(304);guard model.fileListVisible else{throw BrowserError.io("ファイルリスト表示メニューが戻りません")}
+        let oldVolume=model.volume;controller.dispatch(360);guard model.volume<oldVolume || oldVolume==0 else{throw BrowserError.io("音量小さくメニューが反映されません")}
+        controller.dispatch(361);controller.dispatch(361);guard model.volume>=oldVolume || oldVolume==1 else{throw BrowserError.io("音量大きくメニューが反映されません")}
+        model.volume=oldVolume
+        let oldMuted=model.muted;controller.dispatch(362)
+        guard model.muted != oldMuted,checked(362) == model.muted else{throw BrowserError.io("ミュートメニューが反映されません")}
+        controller.dispatch(362);guard model.muted == oldMuted else{throw BrowserError.io("ミュートメニューが元に戻りません")}
+        let before=model.frameIndex;controller.dispatch(352);try await Task.sleep(nanoseconds:700_000_000)
+        guard model.frameIndex>before || model.recording.map({before>=$0.packets.count-1}) == true else{throw BrowserError.io("次コマメニューが反映されません")}
+        controller.dispatch(354);try await Task.sleep(nanoseconds:700_000_000)
+        controller.dispatch(356)
+        model.speedUnit=oldUnit;model.sensorScale=oldScale;model.showMap=oldMap;model.legacyModelID=oldModel;model.projection.mode=oldMode;model.fileListVisible=oldVisible
+        model.showInventory=true
+        for _ in 0..<30{if window?.attachedSheet != nil{break};try await Task.sleep(nanoseconds:100_000_000)}
+        try await Task.sleep(nanoseconds:500_000_000)
+        guard let inventoryView=window?.attachedSheet?.contentView else{throw BrowserError.io("原版メニュー対応表を表示できません")}
+        try captureOwnView(inventoryView,to:folder.appendingPathComponent("legacy-inventory.png"))
+        model.showInventory=false;try await Task.sleep(nanoseconds:300_000_000)
+        result["legacy_menu"]=["menu_bar_command_ids":required.count,"model_items":LegacyModelCatalog.all.count,"checked_state_roundtrip":true,"inventory_commands":LegacyMenuInventory.all.count,"inventory_view_captured":true] as [String:Any]
+        if !CommandLine.arguments.contains("--ui-check-keep-open") {
+            controller.dispatch(307)
+            guard model.index == nil,model.source == nil,model.image == nil else{throw BrowserError.io("データフォルダを閉じるメニューが状態を破棄しません")}
+            result["legacy_close_data"]=true
+        }
     }
     @objc func openImage() { model.openPanel() }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
@@ -188,6 +232,7 @@ final class ScanCancellation: @unchecked Sendable {
 @main enum PCBrowserLauncher {
     @MainActor static func main() async {
         if CommandLine.arguments.contains("--inspect") { exit(await InspectionCLI.run(CommandLine.arguments)) }
+        if let output=InspectionCLI.value("--legacy-inventory",in:CommandLine.arguments) { exit(InspectionCLI.legacyInventory(output)) }
         runApplication()
     }
     @MainActor static func runApplication() {

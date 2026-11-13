@@ -5,8 +5,9 @@ import PCBrowserCore
 struct BrowserView: View {
     @ObservedObject var model:BrowserModel
     @State private var dragOrigin:Double?
+    @State private var columnVisibility=NavigationSplitViewVisibility.all
     var body:some View {
-        NavigationSplitView {sidebar.navigationSplitViewColumnWidth(min:245,ideal:280,max:350)} detail: {
+        NavigationSplitView(columnVisibility:$columnVisibility) {sidebar.navigationSplitViewColumnWidth(min:245,ideal:280,max:350)} detail: {
             VStack(spacing:10) {
                 if model.scanning || model.busy {HStack{ProgressView(value:model.progress);Text("\(Int(model.progress*100))%").monospacedDigit();Button("キャンセル",action:model.cancel)}.padding(.horizontal,2)}
                 projectionBar
@@ -38,6 +39,9 @@ struct BrowserView: View {
         .alert("確認が必要です",isPresented:Binding(get:{model.errorMessage != nil},set:{if !$0{model.errorMessage=nil}})){Button("閉じる",role:.cancel){model.errorMessage=nil}}message:{Text(model.errorMessage ?? "")}
         .sheet(isPresented:$model.showSettings){ViewerSettings(model:model)}
         .sheet(isPresented:$model.showCapabilities){CapabilitiesView()}
+        .sheet(isPresented:$model.showInventory){LegacyInventoryView()}
+        .onChange(of:model.fileListVisible){_,visible in columnVisibility=visible ? .all:.detailOnly}
+        .onChange(of:columnVisibility){_,value in model.fileListVisible=(value != .detailOnly)}
         .sheet(isPresented:$model.showReport){RecordingReportView(model:model)}
     }
     private var sidebar:some View {
@@ -119,7 +123,7 @@ struct BrowserView: View {
     }
     private var metadata:some View {
         HStack(alignment:.top,spacing:28) {
-            VStack(alignment:.leading,spacing:8){LabeledContent("カード時刻",value:model.packet?.cardTime ?? "—");LabeledContent("速度",value:model.currentSpeedKMH.map{String(format:"%.2f km/h",$0)} ?? "—");LabeledContent("WGS84位置",value:model.coordinate.map{String(format:"%.6f, %.6f",$0.latitude,$0.longitude)} ?? "—");LabeledContent("CH / 種別raw",value:model.packet.map{String($0.channel)} ?? "—");LabeledContent("連続録画",value:model.recording.map{"\($0.blockCount) 保存ブロック / \($0.frameCount) フレーム"} ?? "—")}
+            VStack(alignment:.leading,spacing:8){LabeledContent("カード時刻",value:model.packet?.cardTime ?? "—");LabeledContent("速度",value:model.speedText(model.currentSpeedKMH));LabeledContent("WGS84位置",value:model.coordinate.map{String(format:"%.6f, %.6f",$0.latitude,$0.longitude)} ?? "—");LabeledContent("CH / 種別raw",value:model.packet.map{String($0.channel)} ?? "—");LabeledContent("連続録画",value:model.recording.map{"\($0.blockCount) 保存ブロック / \($0.frameCount) フレーム"} ?? "—")}
             VStack(alignment:.leading,spacing:8){LabeledContent("フレームLBA",value:model.packet.map{String($0.headerSector)} ?? "—");LabeledContent("映像 / 音声",value:model.packet.map{"\($0.videoBytes) / \($0.auxiliaryBytes) bytes"} ?? "—");LabeledContent("加速度raw",value:model.packet?.telemetry.accelerationRaw.map{String($0)}.joined(separator:" / ") ?? "—");LabeledContent("衛星数 / fix raw",value:model.packet.map{"\($0.telemetry.satelliteCount) / \($0.telemetry.fixRaw)"} ?? "—")}
         }.font(.caption).padding(14).frame(maxWidth:.infinity,alignment:.leading)
     }
