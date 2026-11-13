@@ -6,5 +6,5 @@
 W=${ORACLE_DIR:-/tmp/wine-try}; INV=${ORACLE_INV:-/tmp/inv}
 tag="$1"; spec="$2"
 echo "$spec" > $INV/spec_$tag.json
-( nohup bash -c "python3 $INV/patchevt.py restore; python3 $INV/patchevt.py apply \"\$(cat $INV/spec_$tag.json)\" > $W/exp_$tag.log 2>&1; bash $W/open_card.sh > $W/open_card.out 2>&1; convert $W/shots/tab_event.png -crop 420x260+604+556 +repage -resize 150% $W/shots/ev_$tag.png; echo EXPTAG \$tag >> $W/exp.out" > /dev/null 2>&1 & )
+( nohup bash -c "python3 $INV/patchevt.py restore; python3 $INV/patchevt.py apply \"\$(cat $INV/spec_$tag.json)\" > $W/exp_$tag.log 2>&1; bash $W/open_card.sh > $W/open_card.out 2>&1; convert $W/shots/tab_event.png -crop 420x260+604+556 +repage -resize 150% $W/shots/ev_$tag.png; echo EXPTAG $tag >> $W/exp.out" > /dev/null 2>&1 & )
 echo started $tag

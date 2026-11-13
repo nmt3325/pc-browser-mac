@@ -35,6 +35,8 @@ instead of being guessed. The results are recorded in `docs/validation-history.m
 | `pehook.py` | adds an import of `hook.dll!HookInit` to a copy of the original PE32 executable (`inspect` / `patch`) |
 | `hook.c`, `build_hook.sh` | freestanding i686 hook DLL (clang-18 + lld-link-18): presents the image as `\\.\PHYSICALDRIVE1` / `E:` and logs card reads |
 | `patch1.py` … `patch7.py` | successive source patches of `hook.c` (more logging: read positions, accumulator calls `AT`, last reads and the caller's stack frame) |
+| `patch8.py` | hook patch for writes: the hook swallows every write to the mapped image and logs it (`W <sector> <hex>`), plus the return-address candidates (`WS`) and raw stack dwords (`WR`) of the writer, which is how the settings writer chain was located |
+| `patch9.py` | hook patch for dialogs: logs the control traffic of the original's dialogs as `DM <control id> <message> <wParam> <result> <lParam or T <text hex>>` (SendMessage/SendDlgItemMessage, Get/SetWindowText, Set/IsDlgButton…) for control IDs 20000–21999; the original is an ANSI MFC application |
 | `run_p5.sh`, `run_p6.sh`, `run_p7.sh` | build the hook with patches applied and start one experiment |
 | `restart.sh` | start the original in the private prefix (fonts mapped to one CJK font, optional Xvfb) |
 | `open_card.sh` | restart, open the card with the recorded UI clicks, then run `post.json` if present |
