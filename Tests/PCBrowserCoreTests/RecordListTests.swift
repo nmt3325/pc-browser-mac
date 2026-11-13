@@ -6,28 +6,47 @@ final class RecordListTests: XCTestCase {
     private func put(_ v: UInt32, _ o: Int, _ d: inout Data) { CatalogTests().put(v, o, &d) }
     private typealias Spec = CatalogTests.Spec
 
-    /// Event blocks (pre-roll 5, trigger 2, post 3) at records 20/32/44 (and 56/68/80 for a second event);
-    /// the control sector at 8 names the event region 18..<95 behind a normal region 10..<12.
-    private func eventImage(events: Int = 1, region: Bool = true, serial: UInt32 = 5) -> Data {
+    /// Event blocks (pre-roll 5, trigger 2, post 3) at records 20/32/44 (and 56/68/80 for a second event, or one more post
+    /// block at 56 with `extraPost`); the control sector at 8 names the event region 18..<95 behind a normal region 10..<12.
+    /// With one frame per block the two sectors behind the packet are free for a trailer pair.
+    private func eventImage(events: Int = 1, region: Bool = true, serial: UInt32 = 5, frames: Int = 2, extraPost: Bool = false) -> Data {
         // Without a region table the scan starts at the first record sector and must not meet eight empty sectors.
         let r0: UInt32 = region ? 20 : 10
-        var specs = [Spec(record: r0, root: r0, serial: serial, ordinal: 0, start: true), Spec(record: r0 + 12, root: r0, serial: serial, ordinal: 2), Spec(record: r0 + 24, root: r0, serial: serial, ordinal: 4)]
+        // On a real card the packet header byte 8 ("channel") of event packets is the phase, not a camera number.
+        var specs = [Spec(record: r0, root: r0, serial: serial, ordinal: 0, channel: 5, start: true, frames: frames), Spec(record: r0 + 12, root: r0, serial: serial, ordinal: 2, channel: 2, frames: frames), Spec(record: r0 + 24, root: r0, serial: serial, ordinal: 4, channel: 3, frames: frames)]
+        var phases: [UInt8] = [5, 2, 3]
         if events > 1 {
             let r1 = r0 + 36
-            specs += [Spec(record: r1, root: r1, serial: serial + 1, ordinal: 0, start: true), Spec(record: r1 + 12, root: r1, serial: serial + 1, ordinal: 2), Spec(record: r1 + 24, root: r1, serial: serial + 1, ordinal: 4)]
+            specs += [Spec(record: r1, root: r1, serial: serial + 1, ordinal: 0, channel: 5, start: true, frames: frames), Spec(record: r1 + 12, root: r1, serial: serial + 1, ordinal: 2, channel: 2, frames: frames), Spec(record: r1 + 24, root: r1, serial: serial + 1, ordinal: 4, channel: 3, frames: frames)]
+            phases += [5, 2, 3]
+        }
+        if extraPost {
+            specs.append(Spec(record: r0 + 36, root: r0, serial: serial, ordinal: 6, channel: 3, frames: frames))
+            phases.append(3)
         }
         var d = CatalogTests().fixture(specs)
-        for (i, s) in specs.enumerated() { d[Int(s.record) * 512 + 0x0C] = [UInt8(5), 2, 3][i % 3] }
+        for (i, s) in specs.enumerated() { d[Int(s.record) * 512 + 0x0C] = phases[i] }
         if region { put(12, 8 * 512 + 0x1C2, &d); put(18, 8 * 512 + 0x1C6, &d); put(95, 8 * 512 + 0x1CA, &d) }
         return d
     }
-    /// Trigger bytes live in the first packet of the post block (header and its mirror must stay identical).
-    private func trigger(_ d: inout Data, record: Int = 44, flags: UInt8, mask: UInt32) {
-        for sector in [record + 2, record + 6] {
-            let o = sector * 512
-            d[o + 0x40] = flags
-            d[o + 0x4C] = UInt8(mask & 0xFF); d[o + 0x4D] = UInt8((mask >> 8) & 0xFF); d[o + 0x4E] = UInt8((mask >> 16) & 0xFF)
+    /// The cause of an event sits in the second sector of the trailer pair behind the last packet of a post block:
+    /// flags at 0xDB and the 24-bit cause mask at 0xE7. The identifier word at 4 is repeated at 0x1FC.
+    private func trailer(_ d: inout Data, record: Int, frames: Int = 1, magic: UInt32 = 0xFFFFD104, flags: UInt8, mask: UInt32, identifier: UInt32 = 77, mirrored: UInt32 = 77) {
+        let first = (record + 2 + frames * 5) * 512
+        for k in 0..<2 {
+            let s = first + k * 512
+            put(magic, s, &d); put(identifier, s + 4, &d); put(mirrored, s + 0x1FC, &d)
         }
+        let o = first + 512
+        d[o + 0xDB] = flags
+        d[o + 0xE7] = UInt8(mask & 0xFF); d[o + 0xE8] = UInt8((mask >> 8) & 0xFF); d[o + 0xE9] = UInt8((mask >> 16) & 0xFF)
+    }
+    /// The mirror (D102 copy) of the first packet of a block holds the same two fields at 0x40 and 0x4C. A real card
+    /// finishes them after the header copy, so only the mirror is changed here.
+    private func mirror(_ d: inout Data, record: Int, flags: UInt8, mask: UInt32) {
+        let o = (record + 6) * 512
+        d[o + 0x40] = flags
+        d[o + 0x4C] = UInt8(mask & 0xFF); d[o + 0x4D] = UInt8((mask >> 8) & 0xFF); d[o + 0x4E] = UInt8((mask >> 16) & 0xFF)
     }
 
     func testEventBlocksFormOneEventRecordingInsideTheEventRegion() throws {
@@ -61,13 +80,54 @@ final class RecordListTests: XCTestCase {
         XCTAssertTrue(i.recordings[0].isEvent)
         XCTAssertEqual(i.validatedFrameCount, 6)
     }
-    func testEventListReadsTheTriggerFromRawHeaders() throws {
-        for (flags, mask, name) in [(UInt8(0x01), UInt32(0x01), "衝撃"), (0x04, 0x10, "ワンタッチ"), (0x01, 0x100, "外部トリガ1"), (0x80, 0x01, "イベント")] {
-            var d = eventImage(); trigger(&d, flags: flags, mask: mask)
+    /// Established on a copy of a real card by editing single sectors and reading the original application's event list:
+    /// the label follows the post block trailer, not the per-packet headers.
+    func testEventListReadsTheCauseFromThePostBlockTrailer() throws {
+        let table: [(UInt8, UInt32, String)] = [
+            (0x01, 0x01, "衝撃"), (0x01, 0x02, "急発進/急ブレーキ"), (0x01, 0x04, "急ハンドル"), (0x01, 0x08, "急旋回"),
+            (0x04, 0x10, "ワンタッチ"), (0x04, 0x00, "ワンタッチ"), (0x01, 0x00, "イベント"), (0x80, 0x01, "衝撃"),
+            (0x01, 0x03, "衝撃, など"), (0x01, 0x100, "外部トリガ1")]
+        for (flags, mask, name) in table {
+            var d = eventImage(frames: 1); trailer(&d, record: 44, flags: flags, mask: mask)
             let src = MemorySource(d), rows = try EventList.entries(CatalogScanner.scan(src), source: src)
-            XCTAssertEqual(rows.map(\.trigger), [name])
-            XCTAssertEqual(rows.first?.timeText, "2026/11/11 20:25")
+            XCTAssertEqual(rows.map(\.trigger), [name], "flags \(flags) mask \(mask)")
+            XCTAssertEqual(rows.first?.timeText, "2026/11/11 20:25:20", "the original list shows seconds, taken from the first frame of the trigger block")
             XCTAssertEqual(rows.first?.blocks, 3)
+        }
+    }
+    func testOnlyPostTrailersCountAndAnEmptyFirstOneFallsBackToTheFirstPostMirror() throws {
+        func label(_ configure: (inout Data) -> Void) throws -> String? {
+            var d = eventImage(frames: 1, extraPost: true); configure(&d)
+            let src = MemorySource(d)
+            return try EventList.entries(CatalogScanner.scan(src), source: src).first?.trigger
+        }
+        XCTAssertEqual(try label { d in trailer(&d, record: 20, flags: 1, mask: 8); trailer(&d, record: 32, flags: 1, mask: 8) }, "イベント", "pre-roll and trigger blocks are not consulted")
+        XCTAssertEqual(try label { d in trailer(&d, record: 44, flags: 1, mask: 0x10); mirror(&d, record: 44, flags: 1, mask: 0x01) }, "ワンタッチ", "a trailer with a cause wins over the mirror")
+        XCTAssertEqual(try label { d in trailer(&d, record: 44, flags: 0, mask: 0); mirror(&d, record: 44, flags: 1, mask: 0x02) }, "急発進/急ブレーキ", "an empty first trailer falls back to the mirror")
+        XCTAssertEqual(try label { d in trailer(&d, record: 44, flags: 0, mask: 0); mirror(&d, record: 44, flags: 1, mask: 0x01); trailer(&d, record: 56, flags: 1, mask: 0x10) }, "衝撃, など", "the fallback and the next trailer are two records")
+        XCTAssertEqual(try label { d in trailer(&d, record: 44, flags: 1, mask: 0x01); trailer(&d, record: 56, flags: 0, mask: 0); mirror(&d, record: 56, flags: 1, mask: 0x10) }, "衝撃", "a later empty trailer adds nothing")
+        XCTAssertEqual(try label { d in mirror(&d, record: 44, flags: 1, mask: 0x04) }, "急ハンドル", "without any trailer pair the mirror is used")
+        XCTAssertEqual(try label { d in trailer(&d, record: 44, magic: 0xFFFFD103, flags: 1, mask: 1) }, "イベント", "a trailer needs D104 or D106 magic")
+        XCTAssertEqual(try label { d in trailer(&d, record: 44, flags: 1, mask: 1, mirrored: 78) }, "イベント", "a trailer needs its mirrored identifier")
+        XCTAssertEqual(try label { _ in }, "イベント", "an event without any trigger record")
+    }
+    /// On a real card the first post packet of every event is written before its trigger fields are final, so its
+    /// header and mirror differ at 0x40...0x4F. Such a packet is valid and must not make the scan ask for recovery.
+    func testPacketMirrorMayDifferInTheTriggerFieldsOnly() throws {
+        var d = eventImage()
+        d[(44 + 6) * 512 + 0x4C] = 0x01
+        d[(44 + 2) * 512 + 0x4D] = 0x02
+        let src = MemorySource(d), i = try CatalogScanner.scan(src)
+        XCTAssertEqual(i.rejectedCandidates, 0)
+        XCTAssertFalse(i.recoveryRecommended)
+        XCTAssertEqual(i.frameCount, 6)
+        XCTAssertEqual(try ImageScanner.scan(src).frameCount, 6)
+        XCTAssertEqual(try CatalogScanner.loadRecording(XCTUnwrap(i.recordings.first), source: src).packets.count, 6)
+        for offset in [0x3F, 0x50] {
+            var bad = eventImage(); bad[(44 + 6) * 512 + offset] = 0x01
+            let index = try CatalogScanner.scan(MemorySource(bad))
+            XCTAssertEqual(index.rejectedCandidates, 1, "a difference at \(offset) is still a torn pair")
+            XCTAssertTrue(index.recoveryRecommended)
         }
     }
     func testEventListIsOldestFirstAndCancellable() throws {
@@ -76,16 +136,18 @@ final class RecordListTests: XCTestCase {
         XCTAssertThrowsError(try EventList.entries(index, source: src, cancelled: { true }))
     }
     func testTriggerLabelsFollowTheOriginalTable() {
-        func s(_ f: UInt8, _ m: UInt32, _ f2: UInt8 = 0) -> EventTrigger.Sample { .init(flags: f, flags2: f2, mask: m) }
+        func s(_ f: UInt8, _ m: UInt32) -> EventTrigger.Sample { .init(flags: f, mask: m) }
         XCTAssertEqual(EventTrigger.label([]), "イベント")
         XCTAssertEqual(EventTrigger.label([s(0x01, 0x01)]), "衝撃")
         XCTAssertEqual(EventTrigger.label([s(0x04, 0x10)]), "ワンタッチ")
-        XCTAssertEqual(EventTrigger.label([s(0x80, 0x01)]), "イベント", "frames without a trigger flag are ignored")
-        XCTAssertEqual(EventTrigger.label([s(0x00, 0x01, 0x02)]), "衝撃", "the second flag byte also selects a frame")
+        XCTAssertEqual(EventTrigger.label([s(0x80, 0x01)]), "衝撃", "the cause bits name the event whatever the flag byte says")
         XCTAssertEqual(EventTrigger.label([s(0x04, 0x00)]), "ワンタッチ", "flag bit 2 without a named cause is a one-touch event")
         XCTAssertEqual(EventTrigger.label([s(0x01, 0x00)]), "イベント")
         XCTAssertEqual(EventTrigger.label([s(0x01, 0x01), s(0x01, 0x10)]), "衝撃, など")
+        XCTAssertEqual(EventTrigger.label([s(0x01, 0x10), s(0x01, 0x01)]), "衝撃, など", "the cause bits are tested in a fixed order, not by arrival")
         XCTAssertEqual(EventTrigger.label([s(0x01, 0x11)]), "衝撃, など")
+        XCTAssertEqual(EventTrigger.label([s(0x01, 0x03)]), "衝撃, など")
+        XCTAssertEqual(EventTrigger.label([s(0x01, 0x01), s(0x04, 0x00)]), "衝撃", "a record without a cause adds no など")
         XCTAssertEqual(EventTrigger.label([s(0x01, 0x00200000)]), "エリアA検知")
         for entry in EventTrigger.names { XCTAssertEqual(EventTrigger.label([s(0x01, entry.mask)]), entry.text) }
         XCTAssertEqual(EventTrigger.names.count, 20)
@@ -126,6 +188,9 @@ final class RecordListTests: XCTestCase {
         XCTAssertFalse(CivilTime.isValid(year: 2026, month: 2, day: 29, hour: 0, minute: 0, second: 0))
         XCTAssertTrue(CivilTime.isValid(year: 2028, month: 2, day: 29, hour: 0, minute: 0, second: 0))
         XCTAssertEqual(CivilTime.minuteText(CivilTime.seconds(year: 2026, month: 4, day: 28, hour: 9, minute: 51, second: 59)), "2026/04/28 09:51")
+        let c = CivilTime.components(CivilTime.seconds(year: 2026, month: 4, day: 28, hour: 9, minute: 51, second: 4))
+        let stamp = CardTimestamp.parse(Data([26, UInt8(c.month), UInt8(c.day), UInt8(c.hour), UInt8(c.minute), UInt8(c.second), 15]), offset: 0)
+        XCTAssertEqual(stamp.map { CivilTime.secondText($0) }, "2026/04/28 09:51:04")
     }
 
     // MARK: journal
