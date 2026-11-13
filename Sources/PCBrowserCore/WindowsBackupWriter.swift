@@ -12,10 +12,10 @@ import Foundation
 ///    and the start of the next (observed with two adjacent recordings, parts of up to 12 chunks / 17 table entries);
 ///    when a recording ends with the part already fuller than `maxChunkBytesPerPart - recordingBoundaryReserveBytes`
 ///    the original starts the next part first and names it with the values of the recording that just ended
-///    (counter of its first packet, clock of its last packet);
+///    (counter of its frame 0, clock of its last packet);
 ///  * the extent table lists MBR, control pair, the chunks in stream order (NOT sorted: a ring wrap puts a higher
 ///    sector range before a lower one) and finally the mirror pair;
-///  * names are `<%010u frame counter of the first packet of the recording that contains the part's first packet>_<yyyyMMdd>_<HHmmss of the part's first packet>.bak`
+///  * names are `<%010u frame serial of frame 0 of the recording that contains the part's first packet>_<yyyyMMdd>_<HHmmss of the part's first packet>.bak`
 ///    inside a folder named `<yyyyMMdd_HHmmss>` (start of the run, local time).
 public struct WindowsBackupOptions: Sendable {
     /// Observed limit: every genuine part boundary decided by size is consistent with any value in
@@ -152,7 +152,7 @@ public enum WindowsBackupWriter {
             var chunks = try WindowsBackupLayout.chunks(for:recording,source:source)
             for k in chunks.indices { chunks[k].recording = number }
             perRecording.append(chunks)
-            counters.append(try WindowsBackupLayout.frameCounter(source:source,packetSector:recording.packets[0].headerSector))
+            counters.append(startCounter(firstPacketCounter:try WindowsBackupLayout.frameCounter(source:source,packetSector:recording.packets[0].headerSector),chunks:chunks))
             lastClocks.append(recording.packets[recording.packets.count-1].telemetry.clock)
         }
         var parts: [WindowsBackupPartPlan] = [], names = Set<String>()
@@ -198,6 +198,20 @@ public enum WindowsBackupWriter {
             if let last = extents.last, last.upperBound > source.byteCount/512 { throw BrowserError.invalid("バックアップ範囲が入力を超えています") }
         }
         return plan
+    }
+
+    /// The counter in a part's name is the frame serial of FRAME 0 of the recording, also when the first blocks of the recording
+    /// were overwritten by the ring: in all 7 genuine parts of such recordings (first intact block at frame ordinal 900, 4,950,
+    /// 15,750 and 68,850) it was exactly the serial of the first intact packet minus that ordinal; with an intact start the ordinal
+    /// is 0 and nothing changes. A first chunk without header pair takes the ordinal from the block that follows it.
+    static func startCounter(firstPacketCounter: UInt32, chunks: [WindowsBackupChunk]) -> UInt32 {
+        guard let head = chunks.first else { return firstPacketCounter }
+        if let ordinal = head.firstOrdinal { return firstPacketCounter &- ordinal }
+        let held = UInt32(truncatingIfNeeded:head.packets)
+        if chunks.count > 1, chunks[1].recording == head.recording, let next = chunks[1].firstOrdinal, next >= held {
+            return firstPacketCounter &- (next &- held)
+        }
+        return firstPacketCounter
     }
 
     /// True when `chunk` is the continuation, after the ring wrap, of the short block `previous` of the same recording:
