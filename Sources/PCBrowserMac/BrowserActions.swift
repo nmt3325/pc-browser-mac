@@ -147,6 +147,10 @@ extension BrowserModel {
 @MainActor enum DetachedWindows {static var windows:[NSWindow]=[]}
 struct DetachedPreview:View {
     @ObservedObject var model:BrowserModel
-    var body:some View {ZStack {Color.black;if let image=model.image {Image(nsImage:image).resizable().scaledToFit()}}.gesture(DragGesture().onChanged{v in model.projection.yaw=max(-180,min(180,Double(v.translation.width)/3))})}
+    var body:some View {
+        VideoSurface(model:model,detached:true) {
+            ZStack {Color.black;if let image=model.image {Image(nsImage:image).resizable().scaledToFit()}}
+        }
+    }
 }
 

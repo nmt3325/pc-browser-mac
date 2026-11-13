@@ -82,6 +82,14 @@ import PCBrowserCore
         menu.addItem(item("間隔指定のページ印刷…", 9016))
         menu.addItem(item("入力全体を新しいIMGへ複製…", 9017))
         menu.addItem(.separator())
+        let viewRoot = NSMenuItem(title: "映像の操作（右クリック相当）", action: nil, keyEquivalent: ""), viewMenu = NSMenu(title: "映像の操作")
+        viewRoot.submenu = viewMenu
+        let viewItems: [(String, Int)] = [("標準に戻す", 501), ("範囲拡大", 502), ("移動", 503), ("回転", 504), ("左右反転", 505), ("上下反転", 506), ("前後反転", 507),
+                                           ("拡大", 508), ("縮小", 509), ("時計回り（角度指定）…", 510), ("反時計回り（角度指定）…", 511),
+                                           ("周囲カメラ表示調整：標準に戻す", 514), ("周囲カメラ表示調整：移動", 512), ("周囲カメラ表示調整：大きさ", 513), ("NIGHTモード", 517)]
+        for (title, tag) in viewItems { viewMenu.addItem(item(title, tag)) }
+        menu.addItem(viewRoot)
+        menu.addItem(.separator())
         menu.addItem(item("機種指定を解除", 9030))
         menu.addItem(item("対応状況", 9005))
         menu.addItem(item("原版メニュー対応表", 9006))
@@ -124,8 +132,15 @@ import PCBrowserCore
         case 382: menuItem.state = model.showMap ? .on : .off
         case 383: menuItem.state = model.showMap ? .off : .on
         case 400...455: if LegacyModelCatalog.model(commandID: id) != nil { menuItem.state = model.legacyModelID == id ? .on : .off }
-        default: break
+        case 555...559: menuItem.state = ViewCommands.displayMode(commandID: id) == model.projection.mode ? .on : .off
+        default:
+            if let kind = ViewCommands.kind(commandID: id) {
+                if let mode = kind.mouseMode { menuItem.state = model.viewMouseMode == mode ? .on : .off }
+                if kind == .night { menuItem.state = model.projection.night ? .on : .off }
+            }
         }
+        if let kind = ViewCommands.kind(commandID: id), kind != .closeWindow { return model.image != nil }
+        if (555...559).contains(id) { return model.image != nil }
         if Self.recordingCommands.contains(id) { return model.recording != nil && !model.busy && !model.scanning }
         switch id {
         case 307: return model.source != nil || model.index != nil
@@ -150,13 +165,9 @@ import PCBrowserCore
         case 314: model.detachedPreview()
         case 330...333: if let scale = GSensorScale(commandID: id) { model.sensorScale = scale }
         case 340...344: if let mode = Self.singleScreenModes[id] { model.projection.mode = mode }
-        case 350: model.play(rate: 1, backwards: false)
-        case 351: model.play(rate: 4, backwards: false)
-        case 352: model.step(1)
-        case 353: model.play(rate: 1, backwards: true)
-        case 354: model.step(-1)
-        case 355: model.play(rate: 4, backwards: true)
-        case 356: model.pause()
+        case 350...356: model.performPlayback(commandID: id)
+        case 570...576: model.performPlayback(commandID: id - 220)
+        case 555...559: if let mode = ViewCommands.displayMode(commandID: id) { model.projection.mode = mode }
         case 360: model.volume = max(0, model.volume - 0.1)
         case 361: model.volume = min(1, model.volume + 0.1)
         case 362: model.muted.toggle()
@@ -188,7 +199,8 @@ import PCBrowserCore
         case 9016: model.printContactSheet()
         case 9017: model.copyInputImage()
         case 9030: model.legacyModelID = 0
-        default: explain(id)
+        default:
+            if let kind = ViewCommands.kind(commandID: id) { model.performViewCommand(kind) } else { explain(id) }
         }
     }
     /// Explains a command that is blocked, refused for original-media safety, or not yet available.

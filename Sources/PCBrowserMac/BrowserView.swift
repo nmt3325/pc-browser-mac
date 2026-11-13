@@ -4,7 +4,6 @@ import PCBrowserCore
 
 struct BrowserView: View {
     @ObservedObject var model:BrowserModel
-    @State private var dragOrigin:Double?
     @State private var columnVisibility=NavigationSplitViewVisibility.all
     var body:some View {
         NavigationSplitView(columnVisibility:$columnVisibility) {sidebar.navigationSplitViewColumnWidth(min:245,ideal:280,max:350)} detail: {
@@ -85,15 +84,15 @@ struct BrowserView: View {
         }.disabled(model.recording==nil)
     }
     private var preview:some View {
+        VideoSurface(model:model) {
         ZStack {
             RoundedRectangle(cornerRadius:8).fill(.black)
             if let image=model.image {Image(nsImage:image).resizable().scaledToFit().padding(1).accessibilityLabel("録画映像プレビュー")}
             else{VStack(spacing:12){Image(systemName:"video").font(.system(size:40,weight:.light));Text(model.selectionLoading ? "選択した連続録画の索引を読み込み中":model.scanning ? "録画の索引を取得中":"SDカードの録画をMacで確認");Text("IMG / .pcbbackupを開くかSDカードを選択").font(.caption)}.foregroundStyle(.white.opacity(0.75))}
             if (model.rendering || model.selectionLoading) && !model.playing{ProgressView().controlSize(.large).padding(16).background(.ultraThinMaterial,in:RoundedRectangle(cornerRadius:10))}
             if model.projection.mode != .raw {VStack{Spacer();HStack{Text("標準魚眼モデル・手動校正").font(.caption2).padding(5).background(.black.opacity(0.5)).foregroundStyle(.white);Spacer()}}.padding(5)}
-        }.gesture(DragGesture().onChanged{v in
-            guard model.projection.mode != .raw else{return};if dragOrigin==nil{dragOrigin=model.projection.yaw};model.projection.yaw=max(-180,min(180,(dragOrigin ?? 0)+Double(v.translation.width)/3))
-        }.onEnded{_ in dragOrigin=nil})
+        }
+        }
     }
     private var mapPanel:some View {
         VStack(spacing:6) {
