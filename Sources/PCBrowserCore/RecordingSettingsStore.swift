@@ -2,8 +2,8 @@ import Foundation
 import CryptoKit
 import Darwin
 
-/// Where the recording settings live on a card image: the control sector, the channel-settings sector that follows it, and the
-/// backup copies at the very end of the disk (second-to-last sector and the one before it).
+/// Where the recording settings live on a card image: the control sector, the channel-settings sector that follows it, and the two
+/// backup copies that sit directly behind the last journal sector (channel copy first, then the control copy).
 public struct RecordingSettingsLocation: Equatable, Sendable {
     public let control: UInt64, channel: UInt64, backupControl: UInt64, backupChannel: UInt64
 }
@@ -40,11 +40,18 @@ public struct RecordingSettingsWriteSummary: Sendable {
 public enum RecordingSettingsStore {
     public static func sha256(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
 
+    /// The backups are found from the region table, not from the size of the image: the sector after the journal's last sector holds the
+    /// channel copy and the one after that the control copy. What lies behind them is neither read nor written.
     public static func locate(in source: any ByteSource) throws -> RecordingSettingsLocation {
         let control = try ControlHeader.locate(in: source)
         let total = source.byteCount / 512
-        guard total > control.sector + 6, total - 3 > control.sector + 1 else { throw BrowserError.unsupported("バックアップ管理セクターを置く余地がありません") }
-        return RecordingSettingsLocation(control: control.sector, channel: control.sector + 1, backupControl: total - 2, backupChannel: total - 3)
+        let raw = try source.read(at: control.sector * 512, count: 512)
+        let regions = RecordingRegionTable(sector: [UInt8](raw))
+        let end = UInt64(regions.journalEnd)
+        guard end > control.firstRecordSector, end > control.sector + 1, end + 2 < total else {
+            throw BrowserError.unsupported("領域表から管理セクターのバックアップ位置を特定できません")
+        }
+        return RecordingSettingsLocation(control: control.sector, channel: control.sector + 1, backupControl: end + 2, backupChannel: end + 1)
     }
 
     public static func read(_ source: any ByteSource) throws -> RecordingSettingsState {

@@ -35,8 +35,8 @@ enum SettingsFixture {
         c[0x13] = UInt8(value >> 8)
         return (Data(c), Data(channel))
     }
-    /// Region table literals computed independently (168 h, single-rate history, journal end 60,000,000).
-    static func factoryBytes(first: UInt32 = 10) -> (control: [UInt8], channel: [UInt8]) {
+    /// Region table literals computed independently (168 h, single-rate history, journal end 60,000,000) unless `table` supplies the six words.
+    static func factoryBytes(first: UInt32 = 10, table: [UInt32]? = nil) -> (control: [UInt8], channel: [UInt8]) {
         var c = [UInt8](repeating: 0, count: 512)
         let marker = Array("YP_FORMAT_1.01__\0".utf8)
         for (i, b) in marker.enumerated() { c[1 + i] = b; c[0x1EC + i] = b }
@@ -48,8 +48,8 @@ enum SettingsFixture {
         c.replaceSubrange(0x31..<0x39, with: event8)
         c[0x3A] = 2; c[0x3B] = 2; c[0x3C] = 2; c[0x3D] = 1; c[0x3E] = 3; c[0x3F] = 1
         c[0x46] = 5; c[0x47] = 2; c[0x48] = 5; c[0x49] = 5; c[0x4A] = 5; c[0x50] = 3; c[0x51] = 1
-        word(first, 0x1BE, &c); word(42_385_296, 0x1C2, &c); word(42_385_297, 0x1C6, &c)
-        word(59_697_600, 0x1CA, &c); word(59_697_601, 0x1CE, &c); word(SettingsFixture.journalEnd, 0x1D2, &c)
+        let words = table ?? [first, 42_385_296, 42_385_297, 59_697_600, 59_697_601, SettingsFixture.journalEnd]
+        for (i, w) in words.enumerated() { word(w, 0x1BE + i * 4, &c) }
         for i in 0..<8 { c[0x1D6 + i] = UInt8(0xA1 + i) }
         word(1, 0x1E0, &c); word(1, 0x1E4, &c); word(1, 0x1E8, &c)
         c[0x1FF] = 1
@@ -58,8 +58,8 @@ enum SettingsFixture {
         for i in 0x20..<0x39 { ch[i] = c[i] }
         return (c, ch)
     }
-    static func factory(first: UInt32 = 10) -> (control: Data, channel: Data) {
-        let f = factoryBytes(first: first)
+    static func factory(first: UInt32 = 10, table: [UInt32]? = nil) -> (control: Data, channel: Data) {
+        let f = factoryBytes(first: first, table: table)
         return seal(f.control, f.channel)
     }
 
@@ -67,17 +67,38 @@ enum SettingsFixture {
     struct Geometry {
         let totalSectors: Int
         let partitionSectors: Int
+        /// Last sector of the journal region. The two backup sectors follow it directly: the channel copy, then the control copy.
+        let journalEnd: Int
+        /// Without an explicit `journalEnd` the journal ends four sectors before the end of the image (one spare sector remains behind the backups).
+        init(totalSectors: Int, partitionSectors: Int, journalEnd: Int? = nil) {
+            self.totalSectors = totalSectors
+            self.partitionSectors = partitionSectors
+            self.journalEnd = journalEnd ?? totalSectors - 4
+        }
         var controlSector: Int { 1 + partitionSectors }
         var channelSector: Int { controlSector + 1 }
         var firstRecordSector: Int { controlSector + 4 }
-        var backupChannelSector: Int { totalSectors - 3 }
-        var backupControlSector: Int { totalSectors - 2 }
+        var backupChannelSector: Int { journalEnd + 1 }
+        var backupControlSector: Int { journalEnd + 2 }
         var byteCount: Int { totalSectors * 512 }
+        /// The six region words. Journals of 300,000 sectors or more get the table the original computes for 常時＋イベント, 168 h, single-rate
+        /// history (calculated here independently of the production code); smaller images get a tiny table that no setting choice can reproduce.
+        var regionWords: [UInt32] {
+            let first = firstRecordSector
+            if journalEnd - first >= 302_400 + 100 {
+                let journalStart = journalEnd - 302_400 + 1
+                let normalEnd = journalStart * 71 / 1200 * 12
+                return [first, normalEnd, normalEnd + 1, journalStart - 1, journalStart, journalEnd].map { UInt32($0) }
+            }
+            return [first, first + 1, first + 2, first + 3, first + 4, journalEnd].map { UInt32($0) }
+        }
     }
-    /// 64 sectors: MBR, a 7-sector partition without a file system, the settings sectors and their backups.
+    /// 64 sectors: MBR, a 7-sector partition without a file system, the settings sectors and their backups (journal ends at sector 60).
     static let plain = Geometry(totalSectors: 64, partitionSectors: 7)
     /// 4150 sectors: MBR, a FAT16 partition of 4137 sectors (4100 clusters of one sector) with a CONFIG folder, the settings sectors and their backups.
     static let withFAT = Geometry(totalSectors: 4150, partitionSectors: 4137)
+    /// About 179 MB: room for a real 168 h history, so the region table is the standard one and layout changes are offered.
+    static let large = Geometry(totalSectors: 350_010, partitionSectors: 7, journalEnd: 350_000)
 
     static func put(_ bytes: Data, sector: Int, into d: inout Data) {
         let start = sector * 512
@@ -92,7 +113,7 @@ enum SettingsFixture {
         mbr[510] = 0x55; mbr[511] = 0xAA
         put(Data(mbr), sector: 0, into: &d)
         if fat { put(fat16Partition(sectors: g.partitionSectors), sector: 1, into: &d) }
-        let f = factory(first: UInt32(g.firstRecordSector))
+        let f = factory(first: UInt32(g.firstRecordSector), table: g.regionWords)
         put(f.control, sector: g.controlSector, into: &d)
         put(f.channel, sector: g.channelSector, into: &d)
         put(f.channel, sector: g.backupChannelSector, into: &d)

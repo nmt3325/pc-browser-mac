@@ -17,9 +17,23 @@ final class RecordingSettingsStoreTests: XCTestCase {
         return url
     }
     func changedSectors(_ a: Data, _ b: Data) -> [Int] {
+        XCTAssertEqual(a.count, b.count)
         var result: [Int] = []
-        for n in 0..<(a.count / 512) where SettingsFixture.sector(a, n) != SettingsFixture.sector(b, n) { result.append(n) }
+        a.withUnsafeBytes { (pa: UnsafeRawBufferPointer) in
+            b.withUnsafeBytes { (pb: UnsafeRawBufferPointer) in
+                for n in 0..<(min(a.count, b.count) / 512) where memcmp(pa.baseAddress! + n * 512, pb.baseAddress! + n * 512, 512) != 0 { result.append(n) }
+            }
+        }
         return result
+    }
+    /// Copy of `image` whose region table ends the journal at `end` (the checksum is not repaired; locating does not need it).
+    func settingJournalEnd(_ end: UInt32, in image: Data, _ g: SettingsFixture.Geometry) -> Data {
+        var d = image
+        var word = [UInt8](repeating: 0, count: 4)
+        SettingsFixture.word(end, 0, &word)
+        let at = g.controlSector * 512 + 0x1D2
+        d.replaceSubrange(at..<(at + 4), with: Data(word))
+        return d
     }
     func current(_ d: Data, _ change: (inout RecordingSettings) -> Void) throws -> RecordingSettings {
         var s = try RecordingSettingsStore.read(MemorySource(d)).snapshot.settings
@@ -32,6 +46,19 @@ final class RecordingSettingsStoreTests: XCTestCase {
     func testLocateFindsTheSettingsSectorsAndTheirBackups() throws {
         let location = try RecordingSettingsStore.locate(in: MemorySource(SettingsFixture.image(plain)))
         XCTAssertEqual(location, RecordingSettingsLocation(control: 8, channel: 9, backupControl: 62, backupChannel: 61))
+    }
+    func testBackupsAreFoundBehindTheJournalNotAtTheEndOfTheImage() throws {
+        let big = SettingsFixture.large
+        let location = try RecordingSettingsStore.locate(in: MemorySource(SettingsFixture.image(big)))
+        XCTAssertEqual(location, RecordingSettingsLocation(control: 8, channel: 9, backupControl: 350_002, backupChannel: 350_001))
+        XCTAssertLessThan(location.backupControl, UInt64(big.totalSectors - 2), "unused space behind the backups does not move them")
+    }
+    func testLocateRefusesATableThatLeavesNoRoomForTheBackups() throws {
+        let d = SettingsFixture.image(plain)
+        XCTAssertEqual(try RecordingSettingsStore.locate(in: MemorySource(settingJournalEnd(61, in: d, plain))).backupControl, 63)
+        XCTAssertThrowsError(try RecordingSettingsStore.locate(in: MemorySource(settingJournalEnd(62, in: d, plain))), "the control copy would lie behind the image")
+        XCTAssertThrowsError(try RecordingSettingsStore.locate(in: MemorySource(settingJournalEnd(UInt32(plain.firstRecordSector), in: d, plain))), "a journal that ends inside the records")
+        XCTAssertThrowsError(try RecordingSettingsStore.locate(in: MemorySource(settingJournalEnd(0, in: d, plain))))
     }
     func testReadDecodesTheFactorySettingsAndNoticesDifferingBackups() throws {
         let d = SettingsFixture.image(plain)
@@ -134,9 +161,13 @@ final class RecordingSettingsStoreTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: input), d)
     }
     func testLayoutChangeCopyHasAConsistentStandardRegionTable() throws {
-        let d = SettingsFixture.image(plain)
+        let big = SettingsFixture.large
+        let d = SettingsFixture.image(big)
         let input = try temp(d)
         let out = output()
+        let start = try RecordingSettingsStore.read(MemorySource(d)).snapshot
+        XCTAssertTrue(start.regionsAreStandard)
+        XCTAssertEqual(start.regions, RecordingRegionTable(normalStart: 12, normalEnd: 33_792, eventStart: 33_793, eventEnd: 47_600, journalStart: 47_601, journalEnd: 350_000))
         let wanted = try current(d) { $0.setMode(.eventOnly); $0.historyHoursIndex = 0 }
         let summary = try RecordingSettingsStore.writeCopy(of: input, to: out, new: wanted, preferClone: false)
         XCTAssertEqual(summary.plan?.layoutChanged, true)
@@ -144,13 +175,21 @@ final class RecordingSettingsStoreTests: XCTestCase {
         let state = try RecordingSettingsStore.read(MemorySource(result))
         XCTAssertTrue(state.snapshot.regionsAreStandard)
         XCTAssertEqual(state.snapshot.settings.mode, .eventOnly)
-        XCTAssertEqual(state.snapshot.regions.normalStart, 0)
-        XCTAssertEqual(state.snapshot.regions.eventStart, UInt32(plain.firstRecordSector))
+        XCTAssertEqual(state.snapshot.regions, RecordingRegionTable(normalStart: 0, normalEnd: 0, eventStart: 12, eventEnd: 306_800, journalStart: 306_801, journalEnd: 350_000))
         XCTAssertEqual(state.snapshot.generation, 2)
-        XCTAssertEqual(SettingsFixture.sector(result, plain.controlSector), SettingsFixture.sector(result, plain.backupControlSector))
+        XCTAssertEqual(SettingsFixture.sector(result, big.controlSector), SettingsFixture.sector(result, big.backupControlSector))
         let header = try ControlHeader.locate(in: MemorySource(result))
-        XCTAssertEqual(header.firstRecordSector, UInt64(plain.firstRecordSector))
-        XCTAssertEqual(changedSectors(d, result), [8, 62], "a pure layout change leaves the channel sectors as they are, like the original")
+        XCTAssertEqual(header.firstRecordSector, UInt64(big.firstRecordSector))
+        XCTAssertEqual(changedSectors(d, result), [8, 350_002], "a pure layout change leaves the channel sectors as they are, like the original")
+    }
+    func testLayoutChangesAreRefusedWhenTheRegionTableIsNotTheKnownOne() throws {
+        let d = SettingsFixture.image(plain)
+        let state = try RecordingSettingsStore.read(MemorySource(d))
+        XCTAssertFalse(state.snapshot.regionsAreStandard)
+        let wanted = try current(d) { $0.setMode(.eventOnly) }
+        XCTAssertThrowsError(try RecordingSettingsStore.plan(MemorySource(d), new: wanted))
+        let sameLayout = try current(d) { $0.beepEnabled = false }
+        XCTAssertNoThrow(try RecordingSettingsStore.plan(MemorySource(d), new: sameLayout))
     }
 
     // MARK: command files through writeCopy
