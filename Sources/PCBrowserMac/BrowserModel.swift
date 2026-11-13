@@ -68,6 +68,8 @@ import PCBrowserCore
     @Published var gpsLogOffset = 0.0 { didSet { updateRoute() } }
     @Published var exportSubtitles=true
     @Published var showSettings=false
+    @Published var showRecordingSettings=false
+    let recordingEditor=RecordingSettingsEditor()
     @Published var settingsTab=0
     @Published var showCapabilities=false
     @Published var showInventory=false
