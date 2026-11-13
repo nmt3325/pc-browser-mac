@@ -84,8 +84,9 @@ public enum RecordingSessions {
     /// chain leads from such a block into a block with metadata, it is the beginning of that recording
     /// (a ring wrap overwrote its first sectors), exactly as the original keeps it in the recording's backup.
     /// A header that is present but names another record stays an unassigned fragment.
-    /// Blocks whose metadata sector lies in `eventRegion` form one event per (root, serial, channel): the three phases of an
-    /// event differ in `formatKey` only by their block type and must stay one recording.
+    /// Blocks whose metadata sector lies in `eventRegion` form one event per (root, serial): the three phases of an
+    /// event differ in `formatKey` by their block type, and in the event region the packet header byte 8 (`channel`) carries that
+    /// phase too (5 pre-roll, 2 trigger, 3 post on a real card), so neither may split the recording.
     public static func group(_ blocks: [RecordBlock], previous: [String:UInt64] = [:], adoptable: Set<String> = [], eventRegion: Range<UInt64>? = nil) -> [Recording] {
         var follower: [UInt64:RecordBlock] = [:]
         if !adoptable.isEmpty {
@@ -108,7 +109,7 @@ public enum RecordingSessions {
         for b in blocks {
             let key: String
             if let m = b.metadata {
-                if let eventRegion, eventRegion.contains(UInt64(m.sector)) { key = "event-\(m.sessionSector)-\(m.sessionSerial)-\(b.channel)" }
+                if let eventRegion, eventRegion.contains(UInt64(m.sector)) { key = "event-\(m.sessionSector)-\(m.sessionSerial)" }
                 else { key = sessionKey(m,channel:b.channel) }
                 order[b.key] = Double(m.frameOffset)
             } else if adoptable.contains(b.key), let (root,hops) = adoptedRoot(b), let m = root.metadata {
@@ -212,7 +213,7 @@ public enum CatalogScanner {
         func checked(_ sector: UInt64, header: Data? = nil) throws -> (PacketReference,Data) {
             let h = try header ?? read(sector), ref = try PacketReference(h,sector:sector,diskBytes:source.byteCount)
             let tail = try read(ref.tail)
-            guard try Bytes(tail).le32(0) == 0xFFFFD102, h.dropFirst(4) == tail.dropFirst(4) else {
+            guard try Bytes(tail).le32(0) == 0xFFFFD102, PacketMirror.matches(header: h, mirror: tail) else {
                 throw BrowserError.invalid("対になるパケットヘッダーが一致しません")
             }
             return (ref,h)
@@ -349,7 +350,7 @@ public enum CatalogScanner {
                       ref.tail <= block.last.trailerSector,
                       block.metadata?.matches(ref) ?? true else { throw BrowserError.invalid("録画の索引が変更または破損しています。復旧走査を試してください") }
                 let tail = try source.read(at:ref.tail*512,count:512)
-                guard try Bytes(tail).le32(0) == 0xFFFFD102, h.dropFirst(4) == tail.dropFirst(4),
+                guard try Bytes(tail).le32(0) == 0xFFFFD102, PacketMirror.matches(header: h, mirror: tail),
                       seen.insert(sector).inserted else { throw BrowserError.invalid("録画パケットの照合に失敗しました") }
                 packets.append(try FramePacket.parse(h,sector:sector,diskBytes:source.byteCount))
                 sector = ref.tail+1

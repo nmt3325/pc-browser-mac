@@ -94,6 +94,10 @@ public enum CivilTime {
     public static func minuteText(_ c: CardTimestamp) -> String {
         String(format: "%04d/%02d/%02d %02d:%02d", c.year, c.month, c.day, c.hour, c.minute)
     }
+    /// `yyyy/MM/dd HH:mm:ss`, the second-resolution form of the original event list.
+    public static func secondText(_ c: CardTimestamp) -> String {
+        String(format: "%04d/%02d/%02d %02d:%02d:%02d", c.year, c.month, c.day, c.hour, c.minute, c.second)
+    }
 }
 
 // MARK: - Device identity
@@ -110,48 +114,77 @@ public enum DeviceIdentity {
 
 // MARK: - Event trigger
 
-/// Trigger naming of the original event list, taken from the per-frame trigger bytes of the
-/// trigger and post blocks (header bytes 0x40/0x41 select frames, 0x4C..0x4E name the cause).
+/// Trigger naming of the original event list.
+///
+/// The original takes the cause of an event from the post block (phase 3). The second sector of a block's
+/// trailer pair (D106 between the parts of a long block, D104 at its end) repeats the two trigger fields of the
+/// trigger packet: flags at 0xDB and the 24-bit cause mask at 0xE7...0xE9, i.e. header bytes 0x40 and
+/// 0x4C...0x4E moved by 0x9B. When the first trailer of the post phase names no cause, the original falls back
+/// to the D102 mirror of the first post packet, which holds the same two fields (once per event).
+/// Per-packet headers, other phases and the D101 header copy are not consulted.
+/// Established by editing those sectors on a copy of a real card and reading the original application's list.
 public enum EventTrigger {
     public struct Sample: Sendable, Equatable {
-        public var flags: UInt8, flags2: UInt8, mask: UInt32
-        public init(flags: UInt8, flags2: UInt8, mask: UInt32) { self.flags = flags; self.flags2 = flags2; self.mask = mask }
-        public var isCandidate: Bool { flags & 0x6D != 0 || flags2 & 0x0F != 0 }
+        public var flags: UInt8, mask: UInt32
+        public init(flags: UInt8, mask: UInt32) { self.flags = flags; self.mask = mask }
+        public var isEmpty: Bool { flags == 0 && mask == 0 }
+        /// `shift` is 0 for a packet header or mirror and 0x9B inside a block trailer.
+        init(sector: Data, shift: Int) {
+            let b = Bytes(sector)
+            let low = UInt32((try? b.u8(0x4C + shift)) ?? 0)
+            let middle = UInt32((try? b.u8(0x4D + shift)) ?? 0)
+            let high = UInt32((try? b.u8(0x4E + shift)) ?? 0)
+            self.flags = (try? b.u8(0x40 + shift)) ?? 0
+            self.mask = low | (middle << 8) | (high << 16)
+        }
     }
+    /// In the order the original tests the cause bits; the first set bit names the event.
     public static let names: [(mask: UInt32, text: String)] = [
         (0x1, "衝撃"), (0x2, "急発進/急ブレーキ"), (0x4, "急ハンドル"), (0x8, "急旋回"), (0x10, "ワンタッチ"),
         (0x20, "急発進"), (0x40, "急ブレーキ"), (0x100, "外部トリガ1"), (0x200, "外部トリガ2"), (0x800, "近接近"),
         (0x1000, "弱衝撃"), (0x2000, "強衝撃"), (0x4000, "傾斜"), (0x8000, "ドア開"), (0x20000, "わき見"),
         (0x40000, "居眠り"), (0x80000, "ACCスイッチ"), (0x200000, "エリアA検知"), (0x400000, "エリアB検知"), (0x100000, "キーOFF忘れ")]
+    /// Every sample is one trigger record. The causes and flags accumulate; a cause-less record with flag bit 2
+    /// is a one-touch event and without any information the event is just "イベント". ", など" follows when more than
+    /// one record named a cause or one mask has several of the low 16 cause bits.
     public static func label(_ samples: [Sample]) -> String {
-        var firstMask: UInt32?, flags: UInt8 = 0, mask: UInt32 = 0, withMask = 0
-        for s in samples where s.isCandidate {
-            if firstMask == nil { firstMask = s.mask }
+        var flags: UInt8 = 0, mask: UInt32 = 0, causes = 0
+        for s in samples {
             flags |= s.flags; mask |= s.mask
-            if s.mask != 0 { withMask += 1 }
+            if s.mask != 0 { causes += 1 }
         }
-        guard let first = firstMask else { return "イベント" }
-        var text = names.first(where: { first & $0.mask != 0 })?.text ?? (flags & 4 != 0 ? "ワンタッチ" : "イベント")
-        if withMask > 1 || (mask & 0xFFFF).nonzeroBitCount > 1 { text += ", など" }
+        var text = "イベント"
+        if let named = names.first(where: { mask & $0.mask != 0 }) { text = named.text }
+        else if flags & 4 != 0 { text = "ワンタッチ" }
+        if causes > 1 || (mask & 0xFFFF).nonzeroBitCount > 1 { text += ", など" }
         return text
     }
-    /// Walks the packet chain of every block of type 2 and above (pre-roll, trigger, post) and reads only the 512-byte headers.
+    /// Reads two sectors per post block (its trailer pair) and, only when the first post trailer carries nothing, the
+    /// mirror of that block's first packet. Records without any information are dropped.
     public static func samples(of recording: Recording, source: any ByteSource, cancelled: () -> Bool = { false }) throws -> [Sample] {
         var result: [Sample] = []
-        for block in recording.blocks {
-            guard let type = block.metadata?.blockType, type >= EventBlockType.trigger else { continue }
-            var sector = block.first.headerSector
-            while sector <= block.last.headerSector {
-                if cancelled() { throw BrowserError.io("イベント情報の取得をキャンセルしました") }
-                guard let h = try? source.read(at: sector * 512, count: 512),
-                      let ref = try? PacketReference(h, sector: sector, diskBytes: source.byteCount) else { break }
-                let b = Bytes(h)
-                let mask = UInt32((try? b.u8(0x4C)) ?? 0) | UInt32((try? b.u8(0x4D)) ?? 0) << 8 | UInt32((try? b.u8(0x4E)) ?? 0) << 16
-                result.append(Sample(flags: (try? b.u8(0x40)) ?? 0, flags2: (try? b.u8(0x41)) ?? 0, mask: mask))
-                sector = ref.tail + 1
+        var first = true
+        for block in recording.blocks where block.metadata?.blockType == EventBlockType.post {
+            if cancelled() { throw BrowserError.io("イベント情報の取得をキャンセルしました") }
+            var sample = trailerSample(after: block, source: source)
+            if first, sample?.isEmpty ?? true, let mirror = try? source.read(at: block.first.trailerSector * 512, count: 512), mirror.count == 512 {
+                sample = Sample(sector: mirror, shift: 0)
             }
+            first = false
+            if let found = sample, !found.isEmpty { result.append(found) }
         }
         return result
+    }
+    /// The trailer pair directly behind the block's last packet: matching D106/D104 magic and the mirrored identifier word.
+    private static func trailerSample(after block: RecordBlock, source: any ByteSource) -> Sample? {
+        let sector = block.last.trailerSector + 1
+        guard let head = try? source.read(at: sector * 512, count: 512), head.count == 512,
+              let data = try? source.read(at: (sector + 1) * 512, count: 512), data.count == 512 else { return nil }
+        let h = Bytes(head), d = Bytes(data)
+        guard let magic = try? h.le32(0), magic == 0xFFFFD104 || magic == 0xFFFFD106,
+              let second = try? d.le32(0), second == magic,
+              let identifier = try? d.le32(4), let mirrored = try? d.le32(0x1FC), identifier == mirrored else { return nil }
+        return Sample(sector: data, shift: 0x9B)
     }
 }
 
@@ -161,7 +194,7 @@ public struct EventEntry: Identifiable, Sendable, Equatable {
     public let trigger: String
     public let deviceID: String?
     public let frames: Int, blocks: Int
-    public var timeText: String { time.map { CivilTime.minuteText($0) } ?? "時刻不明" }
+    public var timeText: String { time.map { CivilTime.secondText($0) } ?? "時刻不明" }
 }
 
 public enum EventList {

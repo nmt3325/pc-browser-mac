@@ -178,7 +178,7 @@ public enum ImageScanner {
                         let packet = try FramePacket.parse(h, sector: sector, diskBytes: source.byteCount)
                         if packet.trailerSector >= rangeEnd { break }
                         let mirror = try header(packet.trailerSector * 512)
-                        guard try Bytes(mirror).le32(0) == 0xFFFFD102, h.dropFirst(4) == mirror.dropFirst(4) else {
+                        guard try Bytes(mirror).le32(0) == 0xFFFFD102, PacketMirror.matches(header: h, mirror: mirror) else {
                             throw BrowserError.invalid("対になるパケットヘッダーが一致しません")
                         }
                         let key = "\(packet.recordSector)-\(packet.channel)"
