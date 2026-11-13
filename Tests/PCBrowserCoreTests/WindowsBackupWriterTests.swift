@@ -10,11 +10,15 @@ final class WindowsBackupWriterTests: XCTestCase {
     let created = Date(timeIntervalSince1970:1_700_000_000)
 
     func put(_ v:UInt32,_ o:Int,_ d:inout Data) { CatalogTests().put(v,o,&d) }
-    /// Stamps frame serial numbers (0x1D4) and the card clock (second, hundredths) of the packets starting at `sectors`.
+    /// Stamps frame serial numbers (0x1D4) and the card clock (second, hundredths) of the packets starting at `sectors`
+    /// (both copies of each header, otherwise the catalog rejects the packet pair).
     func stamp(_ d:inout Data,_ sectors:[Int],counter:UInt32,second:UInt8) {
         for (i,s) in sectors.enumerated() {
-            put(counter+UInt32(i),s*512+0x1D4,&d)
-            d[s*512+15] = second; d[s*512+16] = UInt8(i)
+            // A packet header and its trailing copy (D101/D102 pair, 4 sectors later) must stay identical.
+            for at in [s*512,(s+4)*512] {
+                put(counter+UInt32(i),at+0x1D4,&d)
+                d[at+15] = second; d[at+16] = UInt8(i)
+            }
         }
     }
     /// Three adjacent 12-sector blocks (header pair + two 5-sector packets each) of one recording.
