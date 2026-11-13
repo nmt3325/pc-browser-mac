@@ -33,3 +33,14 @@ The full dialog inventory is in `dialog-port-map.md`; it includes reports/remark
 - IO traces `0x5769B0`, `0x5772B0`, `0x5774E0`, `0x579B10`, `0x57F5F0`: evidence `ev_c132c890a2d76eb15baf06f0a409c8ba880820bc51a0b655895abe78743c9e48`, five complete decompiles, independently checked with Ghidra.
 - The reader consumes a 40-byte header: 12-byte `BDRBACKUP___` magic, 4 and 6-byte fields, a byte, a skipped byte, and two 8-byte fields. Builder and reader objects have different in-memory layouts; object offsets are not file offsets.
 - Per-extent serialization passes four 8-byte values (start, inclusive end, stored offset, length) through virtual calls. This is a trace anchor, **not** a complete proven backup specification. Model branches, offsets, versions and actual original-app interoperability still need verification before enabling a BAK adapter.
+
+
+## Extent reader and IO-key follow-up (read-only investigation)
+
+- `0x545C40`, `0x6BA980`, `0x48BFB0`, `0x48C0E0`: `ev_bbd0203c53fb1ee3c614156ac1641e1748172f5ed802ba17de922375cf6f2ee9`.
+- `0x48A620`, `0x4C2E30`, `0x5774E0`, `0x5772B0`: `ev_ff7561d3ac46f95377ac070508d4c6d9f47cf313752ff7dede7c947ed487f707`.
+- Raw IO and backup reader `0x486FA0`, `0x487250`, `0x545B00`, `0x579B10`: `ev_b21182c289cb6af9c86cee13ac16a89182327e92e513e8ba3af6410c0076b042`.
+
+The 8-byte wrapper read is little-endian. The caller starts the extent table at file offset 0x30, despite 40 meaningful header bytes being parsed. Each entry serializes four 8-byte quantities. The reader masks the top byte of its stored-offset quantity, computes an address translation, and separately retains the high-byte value plus one. File-part/model meaning and all extent constraints still require an original sample. Do not interpret the first 4-byte field as an established universal format version.
+
+The `mode == 2` IO paths XOR each read byte with a byte selected from the IO object's table (`this + 0x18 + keyIndex`); the initial header call uses index 0x7A and later reads use a parsed header byte. **The key table's initialization has not yet been proven.** This is not evidence that the key is literally `index ^ 0x7A`. Nearby reset/list helpers were checked and did not establish it. No guessed BAK cipher, reader or writer has been enabled; no Windows-generated BAK interoperability test has passed.
