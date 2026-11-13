@@ -68,12 +68,19 @@ Exact build-8 native CLI and GUI regression also passed on the same 1,200-frame 
 - Original-application interoperability experiment: the genuine Windows PC Browser opened a folder with the manually built partial BAK, and a variant that also contains the real primary and backup control sectors, but listed zero recordings and left every action disabled without showing an error. The cause is unproven; interoperability remains open and the manual fixtures must not be read as Windows-generated backups.
 - Visual QA: the build-10 main-window capture from the broad regression was inspected after decoding and shows the video, map, labels, sensor/info panel and sidebar rendering correctly. An isolated rerun with no concurrent UI activity passed all automated assertions (first list 0.0697 s), but the macOS runner went offline before its image could be downloaded, and the other build-10 captures (settings, report, BAK window) were not re-inspected.
 
+## Compatibility matrix (manual) — run 1
+
+- Workflow `compat.yml` ([run 43404811414](https://github.com/nmt3325/pc-browser-mac/actions/runs/43404811414), commit `b5e2b899f1beba68d7656cc9cacab4328924d2d4`, docs-only change over the build-10 code).
+- `macos-14` (arm64): the job was cancelled about one second after creation with no steps and no log; the reason was not retrievable (the runner label may no longer be offered). **macOS 14 runtime remains unverified**; only the 14.0 deployment target is checked (`vtool` minos 14.0 on both executables).
+- `macos-15-intel` (x86_64, macOS 15.7.9, Swift 6.1.2): `swift test --jobs 2` reported 126 tests and zero failures, the release build, ad-hoc signing, ZIP extraction with strict signature check, executable comparison (`lipo -archs` equals `x86_64`) and the packaged-CLI synthetic smoke passed. The downloaded evidence artifact matched GitHub's digest; `build-metadata.json` records 126 tests, 0 failures, architecture `x86_64`, minimum macOS 14.0.
+- Scope: unit tests and generated synthetic headers only. No Intel GUI, real media, physical SD or exact-artifact runtime on an Intel Mac. The Intel package is evidence only and is not a distributed build.
+
 ## Explicit remaining gaps
 
 - Full-card real H.264/audio playback and long-duration exports; physical SD insertion, helper privileges, destination-full and physical printers.
 - Original Windows BAK interoperability (the genuine application lists no recordings from the manual partial files), splits, writer, restore, model/FW settings schema/encoding, password algorithms, erase/format and firmware update.
 - Original factory optical calibration, VR-pn/NIGHT pixel equivalence, sensor physical-unit/axis calibration, event/input semantics and multi-camera synchronization.
 - Weekly standby schedule, person-detection warnings/output, connection-ID/Wi-Fi features and original automatic event reports.
-- Intel, macOS 14 actual run, Developer ID signing and Apple notarization.
+- Intel GUI/real-media runtime, macOS 14 actual run (hosted `macos-14` job cancelled before any step), Developer ID signing and Apple notarization. Intel CI unit tests and the synthetic CLI smoke pass (compatibility run 1).
 
 Private image/media/GPS fixtures and original proprietary binaries remain outside Git and CI. Header-only sparse IMG catalog validation does not demonstrate complete video payload reception.

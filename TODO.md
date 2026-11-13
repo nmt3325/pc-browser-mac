@@ -28,12 +28,15 @@ Legend: `[x]` verified or explicitly documented; `[ ]` incomplete. Implementatio
   - [ ] The genuine Windows application lists no recordings from the manual partial files; find the cause or obtain a real Windows-generated backup.
   - [ ] Splits, writer, PC Viewer, full copy and restore.
 - [ ] Model/FW identity and recording configuration editor, proven settings encoding and safe copied-image application.
+  - [x] Static Deep recovery of the card layout strings and the 50 `set.ini` key names recognized by the original parser (names only; see `docs/deep-full-port.md`).
+  - [ ] Key semantics, value domains/units, required-key rule, dialog-control and model mapping, verified on a copied card image (the full-card CONFIG has only `VERSION.INI`; no `SET.INI` sample is available).
 - [ ] Password, erase/format and FW updates: recover exact algorithms; require device-specific confirmation before original media operations.
 
 ## Validation / delivery
 - [x] All original 77 tests preserved; build 10 has 126 passing tests in GitHub Actions (112 earlier plus 14 BAK), including adverse inputs.
 - [x] Exact build-6 CI artifact: CLI/GUI checks passed, including old continuous boundaries and new exports. Validation scope remains the private 1,200-frame partial backup plus synthetic inputs, not the full card.
-- [ ] Separately record physical SD, whole-card media, device/model, Windows-original interoperability, printer, Intel and older-macOS validation gaps.
+- [x] Intel x86_64 (`macos-15-intel`) unit tests (126, 0 failures) and packaged-CLI synthetic smoke pass in the manual compatibility workflow (run 1). Intel GUI/real media and the macOS 14 runtime remain unverified (the hosted `macos-14` job was cancelled before any step).
+- [ ] Separately record physical SD, whole-card media, device/model, Windows-original interoperability, printer, Intel GUI/real-media and macOS 14 runtime validation gaps.
 
 ## Progress
 - Baseline source copied before modification. No original card/image writes performed.
