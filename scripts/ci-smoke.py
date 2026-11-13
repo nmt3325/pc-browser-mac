@@ -78,12 +78,39 @@ def main():
             assert result['input_size_and_mtime_unchanged'] and result['mode'] == 'O_RDONLY', result
             assert result.get('native_videotoolbox_decoded_frames', 0) == 0
             results.append(result)
+        copy = root / 'verified-copy.img'
+        prefix = root / 'recording-report'
+        extra_report = root / 'new-features.json'
+        command = [str(binary), '--inspect', str(image), '--catalog-only', '--raw-query', '--raw-event', '0',
+                   '--recording-report-prefix', str(prefix), '--report-notes', '=1+1,"備考"\nline',
+                   '--copy-image', str(copy), '--report', str(extra_report)]
+        process = subprocess.run(command, capture_output=True, text=True, timeout=60)
+        if process.returncode:
+            raise RuntimeError(process.stdout + process.stderr)
+        extra = json.loads(extra_report.read_text())
+        assert extra['raw_query']['matching_frames'] == 6, extra
+        assert len(extra['raw_query']['recording_ids']) == 1
+        assert extra.get('native_videotoolbox_decoded_frames', 0) == 0, extra
+        assert extra['image_copy']['readbackVerified'] and extra['image_copy']['bytes'] == len(original)
+        assert extra['image_copy']['sha256'] == hashlib.sha256(original).hexdigest()
+        assert copy.read_bytes() == original and extra['input_size_and_mtime_unchanged']
+        reports = json.loads(prefix.with_suffix('.json').read_text())
+        assert len(reports) == 1 and reports[0]['frames'] == 6 and reports[0]['gpsFrames'] == 0
+        assert reports[0].get('meanSpeedKMH') is None and reports[0]['notes'] == '=1+1,"備考"\nline'
+        assert "\"'=1+1,\"\"備考\"\"\nline\"" in prefix.with_suffix('.csv').read_text()
+        # Existing-file refusal and invalid queries must fail, not be silently accepted.
+        refused = subprocess.run([str(binary), '--inspect', str(image), '--catalog-only', '--copy-image', str(copy)], capture_output=True, text=True, timeout=60)
+        assert refused.returncode != 0 and copy.read_bytes() == original
+        invalid = subprocess.run([str(binary), '--inspect', str(image), '--catalog-only', '--raw-query', '--raw-event', '256'], capture_output=True, text=True, timeout=60)
+        assert invalid.returncode != 0
         unchanged = hashlib.sha256(image.read_bytes()).digest() == hashlib.sha256(original).digest()
         assert unchanged
     summary = {'passed': True, 'scope': 'Generated synthetic headers only; no H.264/PCM decoding, GUI, physical SD or private media',
                'continuous_recordings': 1, 'storage_blocks': 3, 'indexed_frames': 6,
                'catalog_validated_frames': results[0]['validated_frames'],
-               'lazy_loaded_validated_frames': results[1]['validated_frames'], 'input_sha256_unchanged': unchanged}
+               'lazy_loaded_validated_frames': results[1]['validated_frames'], 'input_sha256_unchanged': unchanged,
+               'raw_search_no_video_decode': True, 'report_csv_json': True, 'image_copy_sha256_readback': True,
+               'existing_copy_and_invalid_query_refused': True}
     output.write_text(json.dumps(summary, indent=2) + '\n')
     print(json.dumps(summary))
 

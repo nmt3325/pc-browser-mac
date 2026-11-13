@@ -7,7 +7,7 @@ struct ViewerSettings:View {
     var body:some View {
         VStack(alignment:.leading,spacing:12) {
             HStack{Text("表示・校正とカード情報").font(.title2);Spacer();Button("閉じる"){dismiss()}.keyboardShortcut(.cancelAction)}
-            TabView {
+            TabView(selection:$model.settingsTab) {
                 ScrollView{Form {
                     Section("360°標準魚眼モデル") {
                         Text("メーカー固有の光学校正値は未確定です。下の幾何パラメーターで調整できます。Windows版と完全一致する補正を保証するものではありません。").font(.caption).foregroundStyle(.secondary)
@@ -29,7 +29,7 @@ struct ViewerSettings:View {
                         settingSlider("露出（EV）",value:$model.projection.exposure,range:-2...3)
                         settingSlider("元映像の拡大率",value:$model.projection.rawZoom,range:1...4)
                     }
-                }.padding(12)}.tabItem{Text("表示・360°校正")}
+                }.padding(12)}.tabItem{Text("表示・360°校正")}.tag(0)
                 ScrollView { Form {
                     Picker("GPSの座標系",selection:$model.datum){ForEach(GPSDatum.allCases,id:\.self){Text($0.label).tag($0)}}
                     Text("標準は原版VA 0x56DE20から確認したTokyo→WGS84変換です。ヘッダーの緯度経度は1/600000度、速度はraw×0.036 km/hとして読み出します。").font(.caption)
@@ -37,14 +37,15 @@ struct ViewerSettings:View {
                     Divider();LabeledContent("音声",value:model.audioStatus)
                     Text("G・ジャイロは符号付きraw値で表示します。機種別の物理単位換算・軸方向は未確定です。").font(.caption).foregroundStyle(.secondary)
                     GPSSynchronizationPreferences(model:model)
-                }.padding(16)}.tabItem{Text("音声・GPS")}
-                ExportPreferences(model:model).tabItem{Text("書き出し・印刷")}
+                }.padding(16)}.tabItem{Text("音声・GPS")}.tag(1)
+                ExportPreferences(model:model).tabItem{Text("書き出し・印刷")}.tag(2)
+                RawSensorSearchPreferences(model:model).tabItem{Text("raw検索")}.tag(3)
                 ScrollView{VStack(alignment:.leading,spacing:14) {
                     Text("カード設定の読み出し（読み取り専用）").font(.headline)
                     if model.cardFiles.isEmpty {Text("この入力には読み出せるFAT16設定ファイルがありません。部分バックアップに設定領域は含まれないことがあります。").font(.caption)}
                     ForEach(model.cardFiles){file in GroupBox(file.path){ForEach(file.items){item in HStack{Text(item.section+" / "+item.key);Spacer();Text(item.displayValue).textSelection(.enabled)}.font(.caption).padding(3)}}}
                     Text("録画設定のSDへの書き戻し、パスワード解除、録画消去、フォーマットはこの版では実装していません。未解析の設定値を推測して書き込みません。").font(.caption).foregroundStyle(.orange)
-                }.padding(16)}.tabItem{Text("カード情報")}
+                }.padding(16)}.tabItem{Text("カード情報")}.tag(4)
             }
             HStack{Button("校正プリセットを読み込む",action:model.loadCalibration);Button("プリセットを保存",action:model.saveCalibration);Spacer();Button("表示設定を初期値に"){model.projection=ProjectionSettings()}}
         }.padding(20).frame(width:720,height:660)

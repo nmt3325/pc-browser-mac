@@ -38,6 +38,7 @@ struct BrowserView: View {
         .alert("確認が必要です",isPresented:Binding(get:{model.errorMessage != nil},set:{if !$0{model.errorMessage=nil}})){Button("閉じる",role:.cancel){model.errorMessage=nil}}message:{Text(model.errorMessage ?? "")}
         .sheet(isPresented:$model.showSettings){ViewerSettings(model:model)}
         .sheet(isPresented:$model.showCapabilities){CapabilitiesView()}
+        .sheet(isPresented:$model.showReport){RecordingReportView(model:model)}
     }
     private var sidebar:some View {
         VStack(alignment:.leading,spacing:0) {
@@ -48,6 +49,7 @@ struct BrowserView: View {
             if model.hasDetailFilter && model.hasUnsearchedDetails {
                 VStack(alignment:.leading,spacing:4){Text("未確認の録画も表示中").font(.caption2).foregroundStyle(.secondary);Button("全録画の詳細検索",action:model.searchAllDetails).disabled(model.scanning || model.busy)}.padding(.horizontal,12).padding(.bottom,8)
             }
+            HStack{Button("raw検索条件…"){model.settingsTab=3;model.showSettings=true};Spacer();if model.rawQuery.hasConditions{Text("raw条件ON").foregroundStyle(.blue)}}.font(.caption).padding(.horizontal,12).padding(.bottom,8)
             Divider()
             List(selection:$model.selectedID) {
                 ForEach(model.filteredRecordings){r in
@@ -125,7 +127,7 @@ struct BrowserView: View {
         VStack(alignment:.leading,spacing:12) {
             HStack{Toggle("範囲指定",isOn:$model.useRange);Button("INを現在位置に"){model.inFrame=model.frameIndex;model.useRange=true};Button("OUTを現在位置に"){model.outFrame=model.frameIndex;model.useRange=true};Button("全範囲"){model.useRange=false};Spacer()}
             Text(model.useRange ? "フレーム \(min(model.inFrame,model.outFrame)+1) – \(max(model.inFrame,model.outFrame)+1)（両端を含む）":"選択中の録画全体を書き出します").font(.caption).monospacedDigit()
-            HStack{Toggle("動画に字幕を重ねる",isOn:$model.exportSubtitles);Button("字幕・静止画・GPS出力の設定"){model.showSettings=true}}.font(.caption)
+            HStack{Toggle("動画に字幕を重ねる",isOn:$model.exportSubtitles);Button("字幕・静止画・GPS出力の設定"){model.settingsTab=2;model.showSettings=true}}.font(.caption)
             HStack{Button("音声付きMP4"){model.exportMovie()};Button("Motion JPEG AVI"){model.exportMovie(avi:true)};Button("WAV音声",action:model.exportAudio);Button("連続PNG",action:model.exportSequence);Spacer()}
             Text("表示変換・NIGHT・回転は動画と静止画にも反映。バックアップは元データを保持します。").font(.caption2).foregroundStyle(.secondary)
         }.padding(12).disabled(model.recording==nil || model.busy)
@@ -135,7 +137,7 @@ struct BrowserView: View {
             Button("表示中の静止画（PNG）"){model.exportStill()};Button("表示中の静止画（JPEG）"){model.exportStill(jpeg:true)}
             Button("音声付きMP4動画"){model.exportMovie()};Button("Motion JPEG AVI動画"){model.exportMovie(avi:true)};Button("WAV音声",action:model.exportAudio);Button("連続PNG",action:model.exportSequence)
             Divider();Button("GPS / センサーCSV"){model.exportLog("csv")};Button("KML（Google Earth対応）"){model.exportLog("kml")};Button("GPX"){model.exportLog("gpx")}
-            Divider();Button("選択録画の再生可能バックアップ",action:model.backup);Button("表示中の静止画を印刷"){model.printFrame()};Button("間隔指定のページ印刷"){model.printContactSheet()}
+            Divider();Button("録画レポート・備考"){model.showReport=true};Button("入力全体を新しいIMGへ複製",action:model.copyInputImage);Button("選択録画の再生可能バックアップ",action:model.backup);Button("表示中の静止画を印刷"){model.printFrame()};Button("間隔指定のページ印刷"){model.printContactSheet()}
         }label:{Label("書き出し",systemImage:"square.and.arrow.up")}
     }
 }
