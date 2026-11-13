@@ -12,6 +12,13 @@ enum InspectionCLI {
         var result:[String:[String:String]]=[:]
         for p in paths {let a=try FileManager.default.attributesOfItem(atPath:p.path);result[p.lastPathComponent]=["size":String(describing:a[.size] ?? ""),"mtime":String(describing:a[.modificationDate] ?? "")]};return result
     }
+    /// `--legacy-inventory <new.json>`: writes the original-menu inventory (no input is opened or written).
+    static func legacyInventory(_ path:String)->Int32 {
+        do {
+            let data=try JSONSerialization.data(withJSONObject:LegacyMenuInventory.summary(),options:[.prettyPrinted,.sortedKeys])
+            try data.write(to:URL(fileURLWithPath:path),options:.withoutOverwriting);return 0
+        }catch{FileHandle.standardError.write(Data((error.localizedDescription+"\n").utf8));return 1}
+    }
     static func run(_ args:[String]) async ->Int32 {
         do {
             guard let path=value("--inspect",in:args) else{return 64}

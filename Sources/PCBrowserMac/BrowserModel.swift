@@ -34,7 +34,7 @@ import PCBrowserCore
     @Published var audioDrift=0.0
     @Published var projection=ProjectionSettings() {didSet {if oldValue != projection {saveViewerPreferences();reproject()}}}
     @Published var datum=GPSDatum.deviceTokyo {didSet {updateRoute();saveViewerPreferences()}}
-    @Published var showMap=true
+    @Published var showMap=true {didSet {if oldValue != showMap {saveLegacyPreferences()}}}
     @Published var followMap=true
     @Published var satelliteMap=false
     @Published var search=""
@@ -65,6 +65,13 @@ import PCBrowserCore
     @Published var showSettings=false
     @Published var settingsTab=0
     @Published var showCapabilities=false
+    @Published var showInventory=false
+    @Published var fileListVisible=true
+    @Published var legacyModelID=0 {didSet {if oldValue != legacyModelID {saveLegacyPreferences();onTitleChange?()}}}
+    @Published var speedUnit=SpeedUnit.kilometersPerHour {didSet {if oldValue != speedUnit {saveLegacyPreferences()}}}
+    @Published var sensorScale=GSensorScale.standard {didSet {if oldValue != sensorScale {saveLegacyPreferences()}}}
+    @Published var sensorCalibration=SensorCalibration() {didSet {if oldValue != sensorCalibration {saveLegacyPreferences()}}}
+    var onTitleChange:(()->Void)?
     @Published var cardFiles:[CardFile]=[]
     @Published var route:[GeoCoordinate]=[]
     @Published var sensors:[SensorSample]=[]
@@ -125,6 +132,12 @@ import PCBrowserCore
     init() {
         if let d=UserDefaults.standard.data(forKey:"pcbrowser.projection"),let p=try? JSONDecoder().decode(ProjectionSettings.self,from:d){projection=p.clamped}
         if let s=UserDefaults.standard.string(forKey:"pcbrowser.gpsdatum"),let d=GPSDatum(rawValue:s){datum=d}
+        let defaults=UserDefaults.standard
+        if let model=LegacyModelCatalog.model(commandID:defaults.integer(forKey:"pcbrowser.legacyModel")){legacyModelID=model.commandID}
+        if let unit=defaults.string(forKey:"pcbrowser.speedUnit").flatMap({SpeedUnit(rawValue:$0)}){speedUnit=unit}
+        if let scale=GSensorScale(rawValue:defaults.integer(forKey:"pcbrowser.sensorScale")){sensorScale=scale}
+        if let data=defaults.data(forKey:"pcbrowser.sensorCalibration"),let calibration=try? JSONDecoder().decode(SensorCalibration.self,from:data){sensorCalibration=calibration}
+        if defaults.object(forKey:"pcbrowser.showMap") != nil{showMap=defaults.bool(forKey:"pcbrowser.showMap")}
         for name in [NSWorkspace.didMountNotification,NSWorkspace.didUnmountNotification] {
             notifications.append(NSWorkspace.shared.notificationCenter.addObserver(forName:name,object:nil,queue:.main){[weak self] _ in Task{@MainActor in self?.cardNotice="外部メディアの接続状態が変わりました。SDカードを選択できます"}})
         }
@@ -144,6 +157,17 @@ import PCBrowserCore
         }
     }
     func cancel() {cancellation.cancel();exportCancellation.cancel();selectionCancellation.cancel();verificationCancellation.cancel();audioTask?.cancel();pause()}
+    /// Menu "データフォルダを閉じる": drops the loaded input (read-only) and every derived view state.
+    func closeData() {
+        cancel();generation=UUID();selectionGeneration=UUID()
+        index=nil;selectedID=nil;source=nil;sourceURL=nil;scanLimit=nil;image=nil;displayedFrame=nil;rawFrame=nil
+        audioPlayer=nil;audioClip=nil;renderer=nil;timeline=RecordingTimeline(packets:[])
+        frameIndex=0;scrubber=0;scanning=false;busy=false;progress=0;selectionLoading=false;rendering=false
+        selectedExports=[];cardFiles=[];rawQueryResults=[:];route=[];sensors=[];errorMessage=nil
+        useExternalGPS=false;externalGPSTrack=nil;externalGPSStatus="外部ログ未選択";deviceTimeZoneID="";gpsLogOffset=0
+        archiveNotice="";cardNotice="";audioStatus="音声なし";audioDuration=0;audioDrift=0;sourceName="未選択"
+        firstListSeconds=0;catalogSeconds=0;detailSeconds=0;status="IMGファイルまたはSDカードを選択してください"
+    }
     func recoveryScan() {
         guard let source,!scanning,!busy else{return}
         let a=NSAlert();a.messageText="全領域の復旧走査";a.informativeText="高速索引に出ない破損・孤立データを全領域から探します。カード全体の読み取りに時間がかかります。元のカードには書き込みません。";a.addButton(withTitle:"走査する");a.addButton(withTitle:"キャンセル")
