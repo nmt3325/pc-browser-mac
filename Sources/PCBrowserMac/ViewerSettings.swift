@@ -100,7 +100,7 @@ struct ViewerSettings: View {
                             }
                         }
                     }
-                    Text("録画設定のSDへの書き戻し、パスワード解除、録画消去、フォーマットはこの版では実装していません。未解析の設定値を推測して書き込みません。")
+                    Text("録画設定の変更はツールバーの「記録設定」から新しいIMGコピーにだけ書き込めます。原本カードへの書き戻し、パスワード解除、録画消去、フォーマットは実装していません。")
                         .font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
                 }.tabItem { Text("カード情報") }.tag(4)
             }
@@ -143,8 +143,9 @@ struct CapabilitiesView:View {
         ("IMG / SD / 選択録画バックアップ","対応形式: YP_FORMAT_1.01・D101/D102・H.264。SD経路は管理者読み取り専用ヘルパー。"),
         ("音声 / GPS / 地図","PCM形式ヘッダー、Tokyo→WGS84、速度、MapKitルート・現在位置、KML / GPX / CSV。"),
         ("360°表示","フラット、パノラマ、前後、4／16分割、ドーム、リング、全球。標準魚眼モデル・手動校正。"),
-        ("確認と書き出し","シーク、逆再生、速度、NIGHT、回転、しおり、検索、PNG/JPEG、音声付きMP4 / Motion JPEG AVI、選択字幕、WAV、間隔指定静止画・ページ印刷。"),
-        ("全機能互換ではありません","機種別工場校正、暗号化カード、全機種形式、SD設定書き戻し、フォーマット／削除は未対応。"),
+        ("記録設定（Q-01系）","ツールバーの「記録設定」で、IMGから録画方法・コマ数・履歴・上書き・Gセンサー・ID・日時／設置角度の指示ファイルを読み出し、新しいIMGコピーにだけ書き込みます。")
+        ,("確認と書き出し","シーク、逆再生、速度、NIGHT、回転、しおり、検索、PNG/JPEG、音声付きMP4 / Motion JPEG AVI、選択字幕、WAV、間隔指定静止画・ページ印刷。"),
+        ("全機能互換ではありません","機種別工場校正、暗号化カード、全機種形式、原本SDカードへの設定書き戻し、フォーマット／削除は未対応。記録設定はQ-01系のIMGを新しいコピーへ書く形で対応。"),
         ("原版メニュー対応表","メニューバーの「Mac独自 ▸ 原版メニュー対応表」で、原版の全コマンドごとに実装状況・ブロック理由・原本保護の判断を確認できます。"),
         ("検証範囲","実IMG全体の解析と、実映像のMacテストを区別します。物理SD、長時間全録画デコード、Intel、署名・公証は別途検証が必要です。")]
     var body:some View {VStack(alignment:.leading,spacing:16){HStack{Text("PC Browser Mac · 対応状況").font(.title2);Spacer();Button("閉じる"){dismiss()}.keyboardShortcut(.cancelAction)};ForEach(Array(rows.enumerated()),id:\.offset){_,row in VStack(alignment:.leading,spacing:5){Text(row.0).font(.headline);Text(row.1).font(.callout).foregroundStyle(.secondary)}};Spacer(minLength:0)}.padding(25).frame(width:700,height:590)}

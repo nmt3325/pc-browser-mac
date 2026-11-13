@@ -175,7 +175,7 @@ import PCBrowserCore
         case 384: model.speedUnit = .knots
         case 382: model.showMap = true
         case 383: model.showMap = false
-        case 371: model.settingsTab = 4; model.showSettings = true
+        case 371: model.showRecordingSettings = true
         case 372: model.exportMovie()
         case 373: model.exportStill()
         case 374: model.exportLog("csv")
