@@ -27,6 +27,9 @@ public struct ArchiveManifest: Codable, Sendable {
 public final class ArchiveSource: ByteSource, @unchecked Sendable {
     public let manifest: ArchiveManifest
     private let payload: FileByteSource
+    private let verificationLock = NSLock()
+    private var verified = false
+    public var isHashVerified: Bool { verificationLock.lock(); defer { verificationLock.unlock() }; return verified }
     public var byteCount: UInt64 { manifest.sourceBytes }
     public var isPartialCopy: Bool { true }
     public var scanRanges: [Range<UInt64>]? { manifest.segments.map { $0.sourceOffset..<($0.sourceOffset + $0.length) } }
@@ -51,16 +54,22 @@ public final class ArchiveSource: ByteSource, @unchecked Sendable {
             sourceEnd = s.sourceOffset+s.length; storedEnd += s.length
         }
         guard storedEnd == payload.byteCount else { throw BrowserError.invalid("バックアップの長さが一致しません") }
-        if verifyHash {
-            var hasher = SHA256(), at: UInt64 = 0
-            while at < payload.byteCount {
-                let n = Int(min(2*1024*1024, payload.byteCount-at))
-                hasher.update(data: try payload.read(at: at, count: n)); at += UInt64(n)
-            }
-            guard hasher.finalize().map({String(format:"%02x",$0)}).joined() == manifest.payloadSHA256.lowercased() else {
-                throw BrowserError.invalid("バックアップのSHA-256が一致しません")
-            }
+        if verifyHash { try verifyPayload() }
+    }
+    /// The GUI defers this full-payload read so it never blocks the first catalog.
+    /// A deferred archive is visibly unverified until this succeeds.
+    public func verifyPayload(cancelled: () -> Bool = { false }, progress: (Double) -> Void = { _ in }) throws {
+        var hasher = SHA256(), at: UInt64 = 0
+        while at < payload.byteCount {
+            if cancelled() { throw BrowserError.io("バックアップの照合をキャンセルしました") }
+            let n = Int(min(2*1024*1024,payload.byteCount-at))
+            hasher.update(data:try payload.read(at:at,count:n)); at += UInt64(n)
+            progress(Double(at)/Double(payload.byteCount))
         }
+        guard hasher.finalize().map({String(format:"%02x",$0)}).joined() == manifest.payloadSHA256.lowercased() else {
+            throw BrowserError.invalid("バックアップのSHA-256が一致しません")
+        }
+        verificationLock.lock(); verified = true; verificationLock.unlock()
     }
     public func read(at offset: UInt64, count: Int) throws -> Data {
         guard count >= 0, count <= 64*1024*1024, offset <= byteCount, UInt64(count) <= byteCount-offset else {
@@ -68,7 +77,12 @@ public final class ArchiveSource: ByteSource, @unchecked Sendable {
         }
         var out = Data(count: count)
         let end = offset+UInt64(count)
-        for s in manifest.segments {
+        var low = 0, high = manifest.segments.count
+        while low < high {
+            let mid = (low+high)/2, segment = manifest.segments[mid]
+            if segment.sourceOffset+segment.length <= offset { low = mid+1 } else { high = mid }
+        }
+        for s in manifest.segments.dropFirst(low) {
             if s.sourceOffset >= end { break }
             if s.sourceOffset+s.length <= offset { continue }
             let lo = max(offset,s.sourceOffset), hi = min(end,s.sourceOffset+s.length)
@@ -79,10 +93,10 @@ public final class ArchiveSource: ByteSource, @unchecked Sendable {
     }
 }
 public enum SourceOpener {
-    public static func open(_ url: URL) throws -> any ByteSource {
+    public static func open(_ url: URL, verifyArchiveHash: Bool = true) throws -> any ByteSource {
         var directory: ObjCBool = false
         if FileManager.default.fileExists(atPath: url.path, isDirectory: &directory), directory.boolValue {
-            return try ArchiveSource(url: url)
+            return try ArchiveSource(url:url,verifyHash:verifyArchiveHash)
         }
         return try FileByteSource(url: url)
     }
@@ -96,7 +110,10 @@ public enum ArchiveWriter {
         }
         var ranges: [Range<UInt64>] = [0..<512, (index.control.sector*512)..<((index.control.sector+2)*512)]
         for r in recordings {
-            ranges.append((UInt64(r.recordSector)*512)..<((UInt64(r.recordSector)+2)*512))
+            guard r.isLoaded, !r.packets.isEmpty else { throw BrowserError.invalid("バックアップ前に選択録画の索引を読み込んでください") }
+            for record in Set(r.packets.map(\.recordSector)) {
+                ranges.append((UInt64(record)*512)..<((UInt64(record)+2)*512))
+            }
             for p in r.packets { ranges.append((p.headerSector*512)..<((p.trailerSector+1)*512)) }
         }
         ranges.sort { $0.lowerBound < $1.lowerBound }

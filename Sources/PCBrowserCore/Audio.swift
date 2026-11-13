@@ -4,12 +4,19 @@ public struct PCMFormat: Sendable, Codable, Equatable {
     public let sampleRate: Int, channels: Int, bitsPerSample: Int
     public init(sampleRate: Int = 8000, channels: Int = 1, bitsPerSample: Int = 8) { self.sampleRate=sampleRate;self.channels=channels;self.bitsPerSample=bitsPerSample }
     public static func recordFormat(source: any ByteSource, recording: Recording) throws -> PCMFormat {
-        let h = try source.read(at:UInt64(recording.recordSector)*512,count:512), b = Bytes(h)
-        let type = try b.le32(0)
-        guard type == 0xFFFFD103 || type == 0xFFFFD105 else { throw BrowserError.unsupported("録画の音声形式ヘッダーがありません") }
-        // WAVE_FORMAT_PCM; Windows DirectSound VA 0x4B52A0 multiplies the stored rate by 100.
-        let format = PCMFormat(sampleRate:Int(try b.le16(0x16))*100,channels:Int(try b.u8(0x18)),bitsPerSample:Int(try b.u8(0x19)))
-        guard format.valid else { throw BrowserError.unsupported("未対応の録画音声形式です（\(format.description)）") }
+        var found: PCMFormat?
+        let records = recording.packets.isEmpty ? Set(recording.blocks.map(\.recordSector)) : Set(recording.packets.map(\.recordSector))
+        for sector in records.isEmpty ? [recording.recordSector] : Array(records) {
+            let h = try source.read(at:UInt64(sector)*512,count:512), b = Bytes(h)
+            let type = try b.le32(0)
+            guard type == 0xFFFFD103 || type == 0xFFFFD105 else { throw BrowserError.unsupported("録画の音声形式ヘッダーがありません") }
+            // WAVE_FORMAT_PCM; Windows DirectSound VA 0x4B52A0 multiplies the stored rate by 100.
+            let format = PCMFormat(sampleRate:Int(try b.le16(0x16))*100,channels:Int(try b.u8(0x18)),bitsPerSample:Int(try b.u8(0x19)))
+            guard format.valid else { throw BrowserError.unsupported("未対応の録画音声形式です（\(format.description)）") }
+            guard found == nil || found == format else { throw BrowserError.unsupported("録画の途中で音声形式が変更されています") }
+            found = format
+        }
+        guard let format = found else { throw BrowserError.invalid("音声形式がありません") }
         return format
     }
     public var bytesPerSecond: Int { sampleRate*channels*bitsPerSample/8 }
@@ -20,13 +27,30 @@ public struct AudioClip: Sendable {
     public let samples: Data
     public let format: PCMFormat
     public var duration: Double { Double(samples.count)/Double(format.bytesPerSecond) }
-    public static func load(source: any ByteSource, packets: [FramePacket], format: PCMFormat) throws -> AudioClip {
+    public static func load(source: any ByteSource, packets: [FramePacket], format: PCMFormat, cancelled: () -> Bool = { false }) throws -> AudioClip {
         guard format.valid else { throw BrowserError.unsupported("未対応のPCM形式です") }
         let total = packets.reduce(0) { $0+$1.auxiliaryBytes }
         guard total > 0, total <= 64*1024*1024 else { throw BrowserError.unsupported("音声がないか、1録画の音声が64 MiBを超えています") }
         var data = Data();data.reserveCapacity(total)
-        for p in packets where p.auxiliaryBytes > 0 { data.append(try source.read(at:p.auxiliaryOffset,count:p.auxiliaryBytes)) }
-        let block = format.channels*format.bitsPerSample/8
+        let block = format.channels*format.bitsPerSample/8, timeline = RecordingTimeline(packets:packets), maximum = 64*1024*1024
+        var previous: UInt32?
+        for (i,p) in packets.enumerated() {
+            if cancelled() { throw BrowserError.io("音声の読み込みをキャンセルしました") }
+            if let previous, previous != p.recordSector {
+                // Every internal block has its own PCM tail (~20ms in this card).
+                // Align each next block to video time instead of accumulating that drift.
+                let seconds = timeline.starts[i]
+                guard seconds.isFinite, seconds >= 0, seconds <= Double(maximum)/Double(format.bytesPerSecond) else {
+                    throw BrowserError.unsupported("連続録画の音声が64 MiBを超えています")
+                }
+                let aligned = Int((seconds*Double(format.sampleRate)).rounded())*block
+                if data.count > aligned { data.removeSubrange(aligned..<data.count) }
+                else if data.count < aligned { data.append(Data(repeating:format.bitsPerSample == 8 ? 128:0,count:aligned-data.count)) }
+            }
+            previous = p.recordSector
+            guard p.auxiliaryBytes <= maximum-data.count else { throw BrowserError.unsupported("連続録画の音声が64 MiBを超えています") }
+            if p.auxiliaryBytes > 0 { data.append(try source.read(at:p.auxiliaryOffset,count:p.auxiliaryBytes)) }
+        }
         guard data.count%block == 0 else { throw BrowserError.invalid("PCMサンプルの境界が一致しません") }
         return .init(samples:data,format:format)
     }

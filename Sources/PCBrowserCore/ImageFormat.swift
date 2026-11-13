@@ -86,18 +86,10 @@ public struct FramePacket: Identifiable, Sendable {
     public var payloadOffset: UInt64 { (headerSector + 1) * 512 }
     public var isIntra: Bool { codingKind == 2 }
     public static func parse(_ h: Data, sector: UInt64, diskBytes: UInt64) throws -> FramePacket {
-        guard h.count == 512 else { throw BrowserError.truncated("パケットヘッダーが不足しています") }
-        let b = Bytes(h)
-        guard try b.le32(0) == 0xFFFFD101 else { throw BrowserError.invalid("映像パケットの署名が不正です") }
-        let seq = try b.le32(4), selfSector = UInt64(try b.le32(0x1B0)), tail = UInt64(try b.le32(0x1B4))
-        let span = UInt64(try b.le32(0x1AC)), n = UInt64(try b.le32(0x1A6)), aux = UInt64(try b.le32(0x1BC))
-        guard selfSector == sector, tail > sector + 1, tail < diskBytes / 512,
-              tail - sector + 1 == span, try b.le32(0x1FC) == seq else { throw BrowserError.invalid("映像パケットの参照範囲が不正です") }
-        let capacity = (tail - sector - 1) * 512
-        guard n > 0, n <= 16 * 1024 * 1024, n <= capacity, aux <= 65536,
-              (n + 511) / 512 * 512 + aux <= capacity else { throw BrowserError.invalid("映像または補助データの長さが不正です") }
-        let rate = try b.le32(0x1E8)
-        return FramePacket(headerSector: sector, trailerSector: tail, sequence: seq, recordSector: try b.le32(0x1B8), channel: try b.u8(8), codingKind: try b.u8(9), videoBytes: Int(n), auxiliaryBytes: Int(aux), rawField1E8: rate, telemetry: try PacketTelemetry.parse(h))
+        let ref = try PacketReference(h,sector:sector,diskBytes:diskBytes), b = Bytes(h)
+        return FramePacket(headerSector:sector,trailerSector:ref.tail,sequence:ref.sequence,recordSector:ref.record,
+                           channel:ref.channel,codingKind:try b.u8(9),videoBytes:ref.videoBytes,auxiliaryBytes:ref.auxiliaryBytes,
+                           rawField1E8:try b.le32(0x1E8),telemetry:try PacketTelemetry.parse(h))
     }
 }
 
@@ -106,17 +98,37 @@ public struct Recording: Identifiable, Sendable {
     public let recordSector: UInt32
     public let channel: UInt8
     public var packets: [FramePacket]
-    public var startTime: String { packets.first?.cardTime ?? "時刻不明" }
-    public var endTime: String { packets.last?.cardTime ?? "時刻不明" }
-    public var videoBytes: Int { packets.reduce(0) { $0 + $1.videoBytes } }
+    public let blocks: [RecordBlock]
+    public var statistics: RecordingStatistics?
+    public init(id:String,recordSector:UInt32,channel:UInt8,packets:[FramePacket],blocks:[RecordBlock]=[],statistics:RecordingStatistics?=nil) {
+        self.id=id;self.recordSector=recordSector;self.channel=channel;self.packets=packets;self.blocks=blocks;self.statistics=statistics
+    }
+    public var isLoaded: Bool { !packets.isEmpty || blocks.isEmpty }
+    public var startTime: String { packets.first?.cardTime ?? blocks.first?.first.cardTime ?? "時刻不明" }
+    public var endTime: String { packets.last?.cardTime ?? blocks.last?.last.cardTime ?? "時刻不明" }
+    public var frameCount: Int { isLoaded ? packets.count : blocks.reduce(0) { $0+$1.frameCount } }
+    public var blockCount: Int { blocks.isEmpty ? Set(packets.map(\.recordSector)).count : blocks.count }
+    public var hasSessionReference: Bool { blocks.first?.metadata != nil }
+    public var estimatedDuration: Double {
+        if isLoaded { return RecordingTimeline(packets:packets).duration }
+        let fps = Double(blocks.first?.first.telemetry.clock?.nominalFPS ?? 30)
+        return Double(frameCount)/fps
+    }
+    public var videoBytes: Int { packets.reduce(0) { $0+$1.videoBytes } }
 }
 public struct ImageIndex: Sendable {
     public let control: ControlHeader
-    public let recordings: [Recording]
+    public var recordings: [Recording]
     public let scannedBytes: UInt64
     public let isPartialScan: Bool
     public let rejectedCandidates: Int
-    public var frameCount: Int { recordings.reduce(0) { $0 + $1.packets.count } }
+    public var isMetadataCatalog = false
+    public var recoveryRecommended = false
+    public var catalogReadCalls = 0
+    public var backlinkBlocks = 0
+    public var frameCount: Int { recordings.reduce(0) { $0+$1.frameCount } }
+    public var validatedFrameCount: Int { recordings.reduce(0) { $0+$1.packets.count } }
+    public var blockCount: Int { recordings.reduce(0) { $0+$1.blockCount } }
 }
 
 public enum ImageScanner {
@@ -200,7 +212,7 @@ public enum ImageScanner {
             return a.startTime < b.startTime
         }
         progress(covered, total, count)
-        return ImageIndex(control: control, recordings: recordings, scannedBytes: covered,
+        return ImageIndex(control: control, recordings: RecordingSessions.groupValidated(recordings,source:source), scannedBytes: covered,
                           isPartialScan: end < source.byteCount || source.isPartialCopy, rejectedCandidates: rejected)
     }
 }
