@@ -149,7 +149,11 @@ final class WindowsBackupWriterTests: XCTestCase {
 
     func testPartsAreNotLimitedToElevenChunks() throws {
         // Genuine run: one part holds 12 chunks (17 table entries); only the byte limit closes parts.
-        let specs = (0..<12).map { Spec(record:UInt32(10+7*$0),root:10,ordinal:UInt32($0),start:$0 == 0,frames:1) }
+        var specs: [Spec] = []
+        for i in 0..<12 {
+            let record: UInt32 = UInt32(10) + UInt32(7) * UInt32(i)
+            specs.append(Spec(record:record,root:10,ordinal:UInt32(i),start:i == 0,frames:1))
+        }
         let l = try load(CatalogTests().fixture(specs))
         XCTAssertEqual(l.recordings.count,1)
         let plan = try WindowsBackupWriter.plan(source:l.source,index:l.index,recordings:l.recordings,options:.init(created:created,timeZone:tokyo))
