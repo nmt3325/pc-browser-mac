@@ -45,8 +45,9 @@ extension CardLocalTime {
     /// The LOCALTIME line of a TIME.INI file.
     public static func parseIni(_ data: Data) -> CardLocalTime? {
         guard let text = String(data: data, encoding: .utf8) else { return nil }
-        for raw in text.split(whereSeparator: { $0 == "\n" || $0 == "\r" }) {
-            let line = raw.trimmingCharacters(in: .whitespaces)
+        // "\r\n" is ONE Character in Swift, so splitting the String by Character would never separate CRLF lines; split the scalars instead.
+        for raw in text.components(separatedBy: CharacterSet.newlines) {
+            let line = raw.trimmingCharacters(in: CharacterSet.whitespaces)
             if line.uppercased().hasPrefix("LOCALTIME=") { return CardLocalTime.parse(String(line.dropFirst(10))) }
         }
         return nil
