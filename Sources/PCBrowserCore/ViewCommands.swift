@@ -70,3 +70,37 @@ public enum ViewCommands {
     /// Playback commands of the detached-window menu (570–576) are the same as 350–356 in the menu bar.
     public static func playbackCommandID(forDetached id: Int) -> Int? { (570...576).contains(id) ? id - 220 : nil }
 }
+
+/// Comma-separated picture operations for the command line (`--view-ops flipH,cw:90,zoom:2`) and automated checks.
+/// Tokens: `flipH`, `flipV`, `cw:N`, `ccw:N` (whole degrees 1–359 like the original prompt), `zoomIn`, `zoomOut`,
+/// `zoom:F` (1–8) and `reset`. They are applied in order to a standard-state transform.
+public enum ViewOperationScript {
+    public static func transform(from text: String) throws -> ViewTransform {
+        var state = ViewTransform()
+        for part in text.split(separator: ",") {
+            let token = part.trimmingCharacters(in: .whitespaces)
+            if token.isEmpty { continue }
+            let pieces = token.split(separator: ":", maxSplits: 1).map(String.init)
+            guard let name = pieces.first else { throw BrowserError.invalid("未知の画面操作です: \(token)") }
+            let argument: String? = pieces.count > 1 ? pieces[1] : nil
+            switch (name, argument) {
+            case ("flipH", nil): state.flipHorizontal()
+            case ("flipV", nil): state.flipVertical()
+            case ("zoomIn", nil): state.zoomIn()
+            case ("zoomOut", nil): state.zoomOut()
+            case ("reset", nil): state.reset()
+            case ("cw", let value?), ("ccw", let value?):
+                guard let angle = ViewTransform.parseAngleInput(value) else { throw BrowserError.invalid(ViewTransform.angleErrorMessage) }
+                if name == "cw" { state.rotateClockwise(Double(angle)) } else { state.rotateCounterClockwise(Double(angle)) }
+            case ("zoom", let value?):
+                guard let factor = Double(value), factor.isFinite,
+                      (ViewTransform.minimumZoom...ViewTransform.maximumZoom).contains(factor) else {
+                    throw BrowserError.invalid("zoom は1から8の範囲で指定してください")
+                }
+                state.setZoom(factor)
+            default: throw BrowserError.invalid("未知の画面操作です: \(token)")
+            }
+        }
+        return state
+    }
+}
