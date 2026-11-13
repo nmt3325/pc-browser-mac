@@ -6,12 +6,13 @@ import Foundation
 ///    the control sector pair and the mirror pair (last two sectors of the recording partition);
 ///  * a record block ("chunk") is `[D103/D105 header pair][packets][D106/D104 trailer pair]`, stored as its own extent;
 ///  * the first chunk of a recording whose block start was overwritten begins at its first intact packet;
-///  * all selected recordings form ONE chunk stream that is cut into parts: a part is closed after
-///    `maxChunksPerPart` chunks (the original's extent table holds 16 entries = 5 fixed + 11 chunks) or when the next
-///    chunk would push the chunk bytes over `maxChunkBytesPerPart`; a part may therefore hold the end of one recording
-///    and the start of the next (observed with two adjacent recordings); when a recording ends with the part already
-///    fuller than `maxChunkBytesPerPart - recordingBoundaryReserveBytes` the original starts the next part first and
-///    names it with the values of the recording that just ended (counter of its first packet, clock of its last packet);
+///  * all selected recordings form ONE chunk stream that is cut into parts: a part is closed when the next unit of the
+///    stream would push the chunk bytes over `maxChunkBytesPerPart` (a unit is one chunk, or a short block cut by the
+///    ring end together with its continuation after the wrap); a part may therefore hold the end of one recording
+///    and the start of the next (observed with two adjacent recordings, parts of up to 12 chunks / 17 table entries);
+///    when a recording ends with the part already fuller than `maxChunkBytesPerPart - recordingBoundaryReserveBytes`
+///    the original starts the next part first and names it with the values of the recording that just ended
+///    (counter of its first packet, clock of its last packet);
 ///  * the extent table lists MBR, control pair, the chunks in stream order (NOT sorted: a ring wrap puts a higher
 ///    sector range before a lower one) and finally the mirror pair;
 ///  * names are `<%010u frame counter of the first packet of the recording that contains the part's first packet>_<yyyyMMdd>_<HHmmss of the part's first packet>.bak`
@@ -20,7 +21,8 @@ public struct WindowsBackupOptions: Sendable {
     /// Observed limit: every genuine part boundary decided by size is consistent with any value in
     /// [246,630,400, 246,795,776) bytes of chunk data; 481,800 sectors is a round value inside that window.
     public var maxChunkBytesPerPart: UInt64
-    /// Genuine parts never hold more than 11 chunks (16 extent-table entries including the 5 fixed ones).
+    /// No chunk-count limit exists in the genuine data: parts hold 6 to 12 chunks (the 12-chunk part has 17 table entries)
+    /// and every close was decided by size. `Int.max` therefore means "unlimited"; tests pass small values.
     public var maxChunksPerPart: Int
     /// Before a further recording starts, the original closes the current part when it is already so full that the
     /// next recording might not fit comfortably. Observed boundaries (chunk bytes already in the part): closed at
@@ -28,14 +30,19 @@ public struct WindowsBackupOptions: Sendable {
     /// 21,141,504) and at 153,884,160. Every value in (34,557,952, 49,692,672] reproduces all three observations;
     /// 40 MiB is a round value inside that window (the exact rule is not known).
     public var recordingBoundaryReserveBytes: UInt64
+    /// Frames per camera block (450 on the Q-01 at 30 fps). A block that the ring end cut in two (a short block ending at
+    /// the end of the ring plus its continuation after the wrap, whose frame ordinal is not a multiple of this number)
+    /// was never separated by the original's part boundaries (genuine run: a part with 222.7 MB / 11 chunks was closed
+    /// although the 7.7 MB short block would have fit; both pieces then opened the next part). 0 turns the rule off.
+    public var blockFrameCount: Int
     /// `nil` picks a random key index like the original; tests and byte-for-byte comparisons pass one explicitly.
     public var keyIndex: UInt8?
     public var created: Date
     public var timeZone: TimeZone
-    public init(maxChunkBytesPerPart: UInt64 = 246_681_600, maxChunksPerPart: Int = 11, recordingBoundaryReserveBytes: UInt64 = 41_943_040,
-                keyIndex: UInt8? = nil, created: Date = Date(), timeZone: TimeZone = .current) {
+    public init(maxChunkBytesPerPart: UInt64 = 246_681_600, maxChunksPerPart: Int = .max, recordingBoundaryReserveBytes: UInt64 = 41_943_040,
+                blockFrameCount: Int = 450, keyIndex: UInt8? = nil, created: Date = Date(), timeZone: TimeZone = .current) {
         self.maxChunkBytesPerPart = maxChunkBytesPerPart; self.maxChunksPerPart = maxChunksPerPart
-        self.recordingBoundaryReserveBytes = recordingBoundaryReserveBytes
+        self.recordingBoundaryReserveBytes = recordingBoundaryReserveBytes; self.blockFrameCount = blockFrameCount
         self.keyIndex = keyIndex; self.created = created; self.timeZone = timeZone
     }
 }
@@ -48,6 +55,8 @@ public struct WindowsBackupChunk: Sendable, Equatable {
     public let firstClock: CardTimestamp?
     /// Index into the selected recordings (set by `WindowsBackupWriter.plan`).
     public var recording: Int = 0
+    /// Frame ordinal inside the session (0x98 of the block header pair); nil when the header pair was overwritten.
+    public var firstOrdinal: UInt32? = nil
     public var bytes: UInt64 { (sectors.upperBound-sectors.lowerBound)*512 }
 }
 
@@ -107,13 +116,14 @@ public enum WindowsBackupLayout {
             while end+1 < packets.count, packets[end+1].recordSector == record { end += 1 }
             let first = packets[index], last = packets[end]
             var lower = first.headerSector, upper = last.trailerSector+1
-            var header = false, trailer = false
+            var header = false, trailer = false, ordinal: UInt32? = nil
             if UInt64(record)+2 == first.headerSector, headerMagics.contains(try magic(source,sector:UInt64(record))) {
                 lower = UInt64(record); header = true
+                ordinal = try Bytes(source.read(at:UInt64(record)*512,count:512)).le32(0x98)
             }
             if upper+2 <= limit, trailerMagics.contains(try magic(source,sector:upper)) { upper += 2; trailer = true }
             guard upper <= limit else { throw BrowserError.invalid("バックアップ範囲が入力を超えています") }
-            result.append(.init(sectors:lower..<upper,packets:end-index+1,hasHeaderPair:header,hasTrailerPair:trailer,firstClock:first.telemetry.clock))
+            result.append(.init(sectors:lower..<upper,packets:end-index+1,hasHeaderPair:header,hasTrailerPair:trailer,firstClock:first.telemetry.clock,firstOrdinal:ordinal))
             index = end+1
         }
         return result
@@ -165,9 +175,16 @@ public enum WindowsBackupWriter {
                 try flush()
                 inherited = (counters[number-1],lastClocks[number-1])
             }
-            for chunk in chunks {
-                if !current.isEmpty, (current.count >= options.maxChunksPerPart || bytes+chunk.bytes > options.maxChunkBytesPerPart) { try flush() }
-                current.append(chunk); bytes += chunk.bytes
+            var k = 0
+            while k < chunks.count {
+                var unit = [chunks[k]]
+                while k+unit.count < chunks.count, continuesBlock(chunks[k+unit.count],after:unit[unit.count-1],blockFrames:options.blockFrameCount) {
+                    unit.append(chunks[k+unit.count])
+                }
+                let unitBytes = unit.reduce(UInt64(0)) { $0+$1.bytes }
+                // A unit is never split, even when it alone exceeds the limits; an empty part always accepts it.
+                if !current.isEmpty, (unit.count > options.maxChunksPerPart-current.count || bytes+unitBytes > options.maxChunkBytesPerPart) { try flush() }
+                current.append(contentsOf:unit); bytes += unitBytes; k += unit.count
             }
         }
         try flush()
@@ -181,6 +198,15 @@ public enum WindowsBackupWriter {
             if let last = extents.last, last.upperBound > source.byteCount/512 { throw BrowserError.invalid("バックアップ範囲が入力を超えています") }
         }
         return plan
+    }
+
+    /// True when `chunk` is the continuation, after the ring wrap, of the short block `previous` of the same recording:
+    /// its frame ordinal follows directly and is not aligned to the block size.
+    static func continuesBlock(_ chunk: WindowsBackupChunk, after previous: WindowsBackupChunk, blockFrames: Int) -> Bool {
+        guard blockFrames > 0, chunk.recording == previous.recording, let a = previous.firstOrdinal, let b = chunk.firstOrdinal,
+              Int(b) == Int(a)+previous.packets, Int(b) % blockFrames != 0,
+              chunk.sectors.lowerBound < previous.sectors.lowerBound else { return false }
+        return true
     }
 
     static func le64(_ value: UInt64) -> [UInt8] { (0..<8).map { UInt8(truncatingIfNeeded:value >> ($0*8)) } }

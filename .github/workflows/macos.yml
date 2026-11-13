@@ -54,6 +54,7 @@ jobs:
         shell: bash
         env:
           PCB_GUI_EVIDENCE_DIR: ${{ github.workspace }}/ci-gui
+          PCB_REQUIRE_GUI_CHECK: '1'
         run: bash scripts/package-app.sh
       - name: Upload app, source, checksums and build evidence
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
