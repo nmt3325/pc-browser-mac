@@ -64,8 +64,19 @@ final class ScanCancellation: @unchecked Sendable {
             result["audio_prepared"]=model.audioDuration>0;result["audio_seconds"]=model.audioDuration
             result["route_points"]=model.route.count;result["raw_sensor_points"]=model.sensors.count
             guard model.audioDuration>0,!model.route.isEmpty else{throw BrowserError.io("音声またはGPSがGUIに読み込まれていません")}
-            let beforeReverse=model.frameIndex
-            model.togglePlay(backwards:true);try await Task.sleep(nanoseconds:500_000_000);model.pause()
+            let beforeReverse=model.frameIndex,reverseBegan=ProcessInfo.processInfo.systemUptime
+            model.togglePlay(backwards:true)
+            // Observe actual progress rather than assuming every VM completes
+            // a decoder reset and a GPU presentation within exactly 500 ms.
+            for _ in 0..<60 {
+                if model.frameIndex<beforeReverse {break}
+                if let error=model.errorMessage {throw BrowserError.io(error)}
+                try await Task.sleep(nanoseconds:50_000_000)
+            }
+            model.pause()
+            result["reverse_start_frame"]=beforeReverse
+            result["reverse_end_frame"]=model.frameIndex
+            result["reverse_first_progress_seconds"]=ProcessInfo.processInfo.systemUptime-reverseBegan
             result["reverse_playback_decreased"]=model.frameIndex<beforeReverse
             guard model.frameIndex<beforeReverse else {throw BrowserError.io("逆再生位置が戻りませんでした")}
             if let r=model.recording {

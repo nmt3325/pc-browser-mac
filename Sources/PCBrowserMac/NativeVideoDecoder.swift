@@ -79,12 +79,19 @@ actor FrameRenderer {
     private var decoder: NativeVideoDecoder?
     private var last = -1
     private var cached: CGImage?
+    // Reverse/step-back must not construct a new VT/CI session for every
+    // previously displayed frame. Bound decoded memory independently of the
+    // recording length (a 2560x1080 BGRA frame costs about 10.5 MiB).
+    private var recentFrames = FrameCache<CGImage>(maximumBytes: 96 * 1024 * 1024, maximumCount: 12)
     init(source: any ByteSource, packets: [FramePacket]) {
         self.source = source; self.packets = packets
-        fps = packets.compactMap { $0.telemetry.clock?.nominalFPS }.first ?? 30
+        fps = max(1, packets.compactMap { $0.telemetry.clock?.nominalFPS }.first ?? 30)
     }
     func render(_ index: Int) throws -> CGImage {
         guard packets.indices.contains(index) else { throw BrowserError.invalid("フレーム番号が範囲外です") }
+        // A cache hit does not move `last`: it describes the decoder's state,
+        // not the frame currently displayed by the UI.
+        if let image = recentFrames.value(at: index) { return image }
         if index == last, let cached { return cached }
         guard let start = stride(from: index, through: 0, by: -1).first(where: { packets[$0].isIntra }) else {
             throw BrowserError.unsupported("直前のIフレームが見つかりません。次の録画を選択してください")
@@ -99,7 +106,10 @@ actor FrameRenderer {
         for i in (last+1)...index {
             let p = packets[i]
             let data = try source.read(at: p.payloadOffset, count: p.videoBytes)
-            result = try decoder!.decode(data, ordinal: i, fps: 30); last = i
+            let image = try decoder!.decode(data, ordinal: i, fps: fps)
+            result = image; last = i; cached = image
+            let cost = image.bytesPerRow.multipliedReportingOverflow(by: image.height)
+            if !cost.overflow { recentFrames.insert(image, at: i, bytes: cost.partialValue) }
         }
         guard let result else { throw BrowserError.io("フレームが取得できません") }
         cached = result
