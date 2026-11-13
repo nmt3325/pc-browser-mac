@@ -2,11 +2,18 @@
 """Exercise the extracted app CLI using generated headers, never private SD data."""
 import hashlib
 import json
+import os
 import struct
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import pngread
+import synthetic_media
+
+EXPECTED_MEDIA_IMAGE_SHA256 = 'd1f47ab10c5026347b8a7a4a5398a8151e034d2ecbd5586e22bb540796e9526f'
 
 
 def put(data, offset, value):
@@ -53,6 +60,154 @@ def synthetic_image():
             data[(sector + 4) * 512:(sector + 5) * 512] = header
             previous = sector
     return bytes(data)
+
+
+def classify(rgb):
+    """Colour class of a decoded pixel. VideoToolbox applies the BT.709 matrix, so exact equality is not required."""
+    r, g, b = rgb
+    if r > 200 and g > 200 and b > 200:
+        return 'white'
+    if r < 40 and g < 40 and b < 40:
+        return 'black'
+    if r > 170 and g < 100 and b < 100:
+        return 'red'
+    if g > 150 and r < 100 and b < 100:
+        return 'green'
+    if b > 170 and r < 100 and g < 100:
+        return 'blue'
+    return 'other'
+
+
+def png_samples(path):
+    width, height, pixel = pngread.read_png(path)
+    return {'size': [width, height],
+            'classes': {name: classify(pixel(x, y)) for name, (x, y, _) in synthetic_media.SAMPLES.items()}}
+
+
+# Expected picture after each display operation (the generated pattern has four distinct quadrants).
+ORIGINAL_CLASSES = {'front_top': 'red', 'rear_top': 'green', 'front_bottom': 'blue', 'rear_bottom': 'white'}
+VIEW_OPERATION_CLASSES = {
+    'flipH': {'front_top': 'green', 'rear_top': 'red', 'front_bottom': 'white', 'rear_bottom': 'blue'},
+    'flipV': {'front_top': 'blue', 'rear_top': 'white', 'front_bottom': 'red', 'rear_bottom': 'green'},
+    'cw:180': {'front_top': 'white', 'rear_top': 'blue', 'front_bottom': 'green', 'rear_bottom': 'red'},
+    'flipH,cw:180': {'front_top': 'blue', 'rear_top': 'white', 'front_bottom': 'red', 'rear_bottom': 'green'},
+}
+
+
+def run_cli(binary, *arguments, timeout=300):
+    process = subprocess.run([str(binary), *map(str, arguments)], capture_output=True, text=True, timeout=timeout)
+    if process.returncode:
+        raise RuntimeError('exit %d: %s' % (process.returncode, (process.stdout + process.stderr)[-1500:]))
+    return process
+
+
+def load_json(path):
+    return json.loads(Path(path).read_text())
+
+
+def attempt(results, name, strict, function):
+    """Run one media check. Unavailable system media frameworks are recorded unless strict mode is requested."""
+    try:
+        results[name] = dict(function(), passed=True)
+    except Exception as error:  # noqa: BLE001 - the failure text is the evidence
+        if strict:
+            raise
+        results[name] = {'passed': False, 'error': str(error)[-1800:]}
+
+
+def media_smoke(binary, root, strict):
+    """Decode and export a generated H.264 + PCM + GPS card image (a test pattern, never private media)."""
+    image = root / 'synthetic-media.img'
+    original = synthetic_media.build()
+    image.write_bytes(original)
+    image.chmod(0o444)
+    digest = hashlib.sha256(original).hexdigest()
+    results = {'image_bytes': len(original), 'image_sha256': digest, 'image_matches_reference': digest == EXPECTED_MEDIA_IMAGE_SHA256,
+               'strict': strict}
+    # 1. Header-only structure check: no system video/audio framework is involved, so it is always strict.
+    structure = root / 'media-structure.json'
+    run_cli(binary, '--inspect', image, '--catalog-only', '--load-all', '--report', structure)
+    structure_report = load_json(structure)
+    assert (structure_report['recordings'], structure_report['storage_blocks'], structure_report['indexed_frames_estimate']) == (1, 3, 120), structure_report
+    assert structure_report['validated_frames'] == 120 and structure_report['input_size_and_mtime_unchanged'], structure_report
+    results['structure'] = {'recordings': 1, 'storage_blocks': 3, 'validated_frames': 120, 'passed': True}
+
+    def decode_and_features():
+        report, raw = root / 'media-decode.json', root / 'media-raw.png'
+        run_cli(binary, '--inspect', image, '--decode-check', '--features-check', '--max-decode', '120', '--png', raw, '--report', report)
+        data = load_json(report)
+        assert data['native_videotoolbox_decoded_frames'] == 120 and (data['width'], data['height']) == (1280, 540), data
+        assert data['first_recording_frames'] == 120 and data['first_recording_blocks'] == 3 and data['valid_gps_frames'] == 120, data
+        assert data['raw_sensor_frames'] == 120 and abs(data['nominal_fps'] - 30) < 1e-6 and abs(data['timeline_seconds'] - 4) < 0.05, data
+        assert data['audio_format'] == {'sample_rate': 8000, 'bits': 8, 'channels': 1} and data['audio_pcm_bytes'] == 32000, data
+        assert abs(data['audio_seconds'] - 4) < 0.01 and abs(data['audio_minus_video_seconds']) < 0.05, data
+        assert data['input_size_and_mtime_unchanged'], data
+        samples = png_samples(raw)
+        assert samples['size'] == [1280, 540] and samples['classes'] == ORIGINAL_CLASSES, samples
+        return {'decoded_frames': 120, 'size': [1280, 540], 'gps_frames': 120, 'audio_pcm_bytes': 32000,
+                'native_audio_prepared': data.get('native_audio_prepared'), 'picture_classes': samples['classes']}
+
+    def view_operations():
+        checked = {}
+        for script, expected in VIEW_OPERATION_CLASSES.items():
+            report, output = root / 'view-op.json', root / ('view-op-' + script.replace(':', '').replace(',', '_') + '.png')
+            report.unlink(missing_ok=True)
+            run_cli(binary, '--inspect', image, '--decode-check', '--max-decode', '1', '--view-ops', script, '--png', output, '--report', report)
+            data = load_json(report)
+            assert data['view_ops']['script'] == script and data['native_videotoolbox_decoded_frames'] == 1, data
+            samples = png_samples(output)
+            assert samples['classes'] == expected, (script, samples)
+            checked[script] = samples['classes']
+        refused = subprocess.run([str(binary), '--inspect', str(image), '--decode-check', '--max-decode', '1', '--view-ops', 'cw:0'], capture_output=True, text=True, timeout=120)
+        assert refused.returncode != 0, 'angle 0 must be refused'
+        return {'operations': checked, 'invalid_angle_refused': True}
+
+    def exports():
+        folder = root / 'exports'
+        folder.mkdir()
+        common = ['--inspect', image, '--max-decode', '1']
+        report = folder / 'prefix.json'
+        run_cli(binary, *common, '--export-prefix', folder / 'out', '--report', report)
+        data = load_json(report)
+        assert len(data['metal_projection_modes']) == 9, data
+        for name in ('csv', 'gpx', 'kml', 'wav'):
+            assert (folder / ('out.' + name)).stat().st_size > 100, name
+        assert (folder / 'out.wav').stat().st_size == 32044
+        assert len(list(folder.glob('out-*.png'))) == 9
+        movie_report = folder / 'movie.json'
+        run_cli(binary, *common, '--movie', folder / 'movie.mp4', '--frames', '90', '--report', movie_report)
+        movie = load_json(movie_report)
+        assert movie['movie_export']['frames'] == 90 and abs(movie['movie_export']['duration'] - 3) < 0.1, movie
+        assert movie['movie_export']['video_tracks'] == 1 and movie['movie_export']['audio_tracks'] == 1, movie
+        assert movie['movie_size'] == {'width': 1280, 'height': 720}, movie
+        avi_report = folder / 'avi.json'
+        run_cli(binary, *common, '--avi', folder / 'movie.avi', '--frames', '90', '--report', avi_report)
+        avi = load_json(avi_report)['avi_export']
+        assert avi['frames'] == 90 and avi['audioSampleFrames'] == 24000 and avi['segments'] == 1 and avi['width'] == 1280, avi
+        head = (folder / 'movie.avi').read_bytes()[:4096]
+        assert head[:4] == b'RIFF' and head[8:12] == b'AVI ' and b'MJPG' in head, head[:64]
+        sheet_report = folder / 'sheet.json'
+        run_cli(binary, *common, '--print-pdf', folder / 'print.pdf', '--sequence-dir', folder / 'sequence', '--frames', '90',
+                '--frame-step', '10', '--report', sheet_report)
+        sheet = load_json(sheet_report)
+        assert sheet['print_pdf']['frames'] == 9 and sheet['print_pdf']['pages'] == 3, sheet
+        assert sheet['still_sequence']['frames'] == 9 and len(list((folder / 'sequence').glob('*.png'))) == 9, sheet
+        assert (folder / 'print.pdf').read_bytes()[:5] == b'%PDF-'
+        recording_report = folder / 'recording.json'
+        run_cli(binary, *common, '--recording-report-pdf', folder / 'recording.pdf', '--report', recording_report)
+        assert load_json(recording_report)['report_reference_frames'] == [0, 60, 119]
+        assert (folder / 'recording.pdf').read_bytes()[:5] == b'%PDF-'
+        return {'projection_pngs': 9, 'wav_bytes': 32044, 'movie': movie['movie_export'], 'avi': avi,
+                'print_pages': sheet['print_pdf']['pages'], 'sequence_frames': 9, 'report_pdf_reference_frames': [0, 60, 119]}
+
+    attempt(results, 'decode_and_features', strict, decode_and_features)
+    if results['decode_and_features']['passed']:
+        attempt(results, 'view_operations', strict, view_operations)
+        attempt(results, 'exports', strict, exports)
+    else:
+        results['view_operations'] = results['exports'] = {'passed': False, 'error': 'skipped: system H.264 decoder unavailable'}
+    assert hashlib.sha256(image.read_bytes()).hexdigest() == digest, 'input image changed'
+    return results
 
 
 def main():
@@ -125,14 +280,15 @@ def main():
         view_report = json.loads(view_path.read_text()) if view_path.exists() else {'passed': False, 'checks': []}
         assert view_run.returncode == 0 and view_report['passed'], (view_run.stderr, [c for c in view_report['checks'] if not c['passed']])
         assert {c['name'] for c in view_report['checks']} >= {'flipHorizontal', 'flipVertical', 'rotateClockwise90', 'areaZoomTopLeft', 'zoom2PanRight'}
-    summary = {'passed': True, 'scope': 'Generated synthetic headers only; no H.264/PCM decoding, GUI, physical SD or private media',
+        media = media_smoke(binary, root, os.environ.get('PCB_REQUIRE_MEDIA_EXPORT') == '1')
+    summary = {'passed': True, 'scope': 'Generated card headers plus a generated H.264/PCM/GPS test pattern; no physical SD or private media; GUI is not exercised in CI',
                'continuous_recordings': 1, 'storage_blocks': 3, 'indexed_frames': 6,
                'catalog_validated_frames': results[0]['validated_frames'],
                'lazy_loaded_validated_frames': results[1]['validated_frames'], 'input_sha256_unchanged': unchanged,
                'raw_search_no_video_decode': True, 'report_csv_json': True, 'image_copy_sha256_readback': True,
                'existing_copy_and_invalid_query_refused': True,
                'legacy_inventory_commands': inventory['commands'], 'legacy_inventory_statuses': inventory['statuses'],
-               'view_transform_pixel_checks': len(view_report['checks'])}
+               'view_transform_pixel_checks': len(view_report['checks']), 'media': media}
     output.write_text(json.dumps(summary, indent=2) + '\n')
     print(json.dumps(summary))
 

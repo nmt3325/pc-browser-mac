@@ -26,7 +26,7 @@ final class ScanCancellation: @unchecked Sendable {
         }
     }
     private func runUICheck(report:URL,snapshot:String?) async {
-        var result:[String:Any] = ["scope":"Real-media partial backup: GUI/audio/map/projection smoke test; not physical SD"]
+        var result:[String:Any] = ["scope":"GUI/audio/map/projection/view-operation smoke test on the supplied image (synthetic test pattern or real-media backup); not physical SD"]
         do {
             model.muted=true // Exercise the audio clock without playing private recordings aloud.
             for _ in 0..<200 {
@@ -110,7 +110,7 @@ final class ScanCancellation: @unchecked Sendable {
         if let data=try? JSONSerialization.data(withJSONObject:result,options:[.prettyPrinted,.sortedKeys]) { try? data.write(to:report) }
         if !CommandLine.arguments.contains("--ui-check-keep-open") { NSApp.terminate(nil) }
     }
-    private func captureOwnView(_ view:NSView,to url:URL) throws {
+    func captureOwnView(_ view:NSView,to url:URL) throws {
         view.layoutSubtreeIfNeeded();view.displayIfNeeded()
         guard let rep=view.bitmapImageRepForCachingDisplay(in:view.bounds) else{throw BrowserError.io("GUI画像を作成できません")}
         view.cacheDisplay(in:view.bounds,to:rep)
@@ -178,6 +178,7 @@ final class ScanCancellation: @unchecked Sendable {
             guard !application.isTerminated else{throw BrowserError.io("Google Earthが起動直後に終了しました")}
             result["earth_launch"]=["explicit_opt_in":true,"bundle_identifier":application.bundleIdentifier ?? "","process_id":application.processIdentifier,"kml":kml.lastPathComponent,"scope":"LaunchServices open completion; verify Earth document UI separately"] as [String:Any]
         }
+        try await checkViewOperations(result:&result,folder:folder)
         try await checkLegacyMenu(result:&result,folder:folder)
     }
     /// Verifies the original-command menu bar and exercises the non-modal commands.
