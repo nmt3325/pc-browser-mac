@@ -23,11 +23,21 @@ On korakuen, a separate FFmpeg build fully decoded build-6 MP4 video/audio (1,20
 
 Earlier build 5 additionally produced 44 forced OpenDML segments. All 1,201 AVI timeline frames decoded, indexed seeks matched linear frame MD5s, and 320,267 PCM samples exactly matched source WAV. The extra CFR frame preserves a recorded clock gap; 1,200 source packets are not the same thing as 1,200 constant-rate output frames. A three-page/four-frame PDF was visually inspected.
 
-## Visual QA follow-up — build 7 pending
+## Visual QA follow-up — build 7 verified
 
 Actual settings-sheet images exposed intrinsic-width clipping of long Form labels/help. The report PDF also selected an overly thin Japanese font. Source changes replace unbounded forms with finite-width, wrapping settings panes and separate long labels from controls; PDF uses an explicit regular face, clear headings, reserved margins and one page sequence across portrait summaries and landscape references. GUI capture now includes all five settings tabs and their scroll endpoints when available.
 
-These are source changes awaiting Actions and exact-artifact/native revalidation. Do not mark the visual issues resolved solely because the source changed.
+- Commit `e40b30b9ed9c5ba0dcf0f3f150fb8be2ec91b655`, [Actions 43378656035](https://github.com/nmt3325/pc-browser-mac/actions/runs/43378656035): 109 tests, zero failures.
+- Exact app ZIP SHA-256 `c1445f857240768aaa51a9f98d76122f75f86757b829662e27b95f760ea9ee62`; source ZIP `67270872f83cccfd19bc8ad1ee3a2b891b956925eeb090d349884e0c14f11f4e`. Inner checksums, metadata commit, bundle build 7 and strict code-sign verification passed.
+- The new dc Mac reran all 1,200 real-media-frame decode/export, short AVI, external NMEA and missing-timezone refusal, raw query, notes/report, sampled images/print, partial-copy refusal, continuous 450/900 boundaries and all nine projections. No rebuild on dc; original input size/mtime unchanged.
+- Individually inspected all nine own-NSView captures: main, report, five settings tabs and two scroll endpoints. Labels/help wrap; controls fit the finite sheet; bottom controls remain reachable. Captures do not bypass screen-recording permission.
+- Individually inspected all five report-PDF pages: regular Japanese body face, readable headings, no clipped notes/end marker, correct portrait/landscape image captions and global page footers 1/5 through 5/5. PDF text extraction confirms every note and end marker. No physical-printer validation is implied.
+
+## Whole-card header catalog optimization — build 8 pending
+
+Build 7 on a sparse, header-only fixture from the complete card found 34 recordings, 993 blocks and an estimated 439,666 frames. First row: 0.007590 seconds; complete catalog: 21.319446 seconds; reads: 152,400 × 512 bytes (78,028,800 bytes). There were no loaded recordings or decoded media frames; this fixture contains no H.264 or PCM payload. File size and mtime remained unchanged.
+
+Build 8 retains every forward pair/identity/span/length check while expanding telemetry only for first and published/final boundaries, retaining at most one pending 512-byte header per block. The new `catalog_boundary_parses` diagnostic and three appended regression tests check non-linear telemetry work, corrupt intermediate pairs and accurate boundaries at an explicit scan limit. CI, exact-output comparison and native timing are pending; no performance improvement is claimed yet.
 
 ## Explicit remaining gaps
 
