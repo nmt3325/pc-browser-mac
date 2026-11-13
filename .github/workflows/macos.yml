@@ -52,6 +52,8 @@ jobs:
           bash scripts/build-app.sh
       - name: Verify extracted package and generate downloads
         shell: bash
+        env:
+          PCB_GUI_EVIDENCE_DIR: ${{ github.workspace }}/ci-gui
         run: bash scripts/package-app.sh
       - name: Upload app, source, checksums and build evidence
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -61,6 +63,14 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 30
+      - name: Upload GUI self-check evidence (generated test pattern only)
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: gui-check-${{ github.run_number }}
+          path: ci-gui/
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Upload test log even on failure
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

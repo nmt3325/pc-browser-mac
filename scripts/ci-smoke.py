@@ -115,7 +115,7 @@ def attempt(results, name, strict, function):
         results[name] = {'passed': False, 'error': str(error)[-1800:]}
 
 
-def media_smoke(binary, root, strict):
+def media_smoke(binary, root, strict, gui_strict=False, evidence=None):
     """Decode and export a generated H.264 + PCM + GPS card image (a test pattern, never private media)."""
     image = root / 'synthetic-media.img'
     original = synthetic_media.build()
@@ -200,12 +200,43 @@ def media_smoke(binary, root, strict):
         return {'projection_pngs': 9, 'wav_bytes': 32044, 'movie': movie['movie_export'], 'avi': avi,
                 'print_pages': sheet['print_pdf']['pages'], 'sequence_frames': 9, 'report_pdf_reference_frames': [0, 60, 119]}
 
+    def gui_check():
+        """Open the real window on the generated image and run the GUI self-check (playback, audio clock, map, projections, view operations)."""
+        folder = root / 'gui'
+        folder.mkdir()
+        report = folder / 'report.json'
+        process = subprocess.run([str(binary), '--image', str(image), '--ui-check-report', str(report), '--ui-snapshot', str(folder / 'main.png'),
+                                  '--ui-check-extra'], capture_output=True, text=True, timeout=420)
+        data = load_json(report) if report.exists() else {}
+        try:
+            assert process.returncode == 0 and data.get('passed') is True, (process.returncode, data.get('error'), process.stderr[-600:])
+            view = data['view_operations']
+            assert not [k for k, v in view.items() if isinstance(v, str) and v.startswith('FAILED')], view
+            assert sum(1 for v in view.values() if v == 'passed') >= 10, view
+            assert data['route_points'] == 120 and data['raw_sensor_points'] == 720 and data['reverse_playback_decreased'] is True, data
+            assert data['continuously_played_boundaries'] == [40, 80] and data['audio_prepared'] is True, data
+            assert len(data['projection_modes']) == 9 and all(data['projection_modes'].values()), data
+            for name in ('main.png', 'view-ops-flip-rotate.png', 'detached-view.png'):
+                assert (folder / name).stat().st_size > 5000, name
+        finally:
+            if evidence:
+                target = Path(evidence)
+                target.mkdir(parents=True, exist_ok=True)
+                for item in list(folder.glob('*.png')) + list(folder.glob('*.json')):
+                    (target / item.name).write_bytes(item.read_bytes())
+                (target / 'stderr-tail.txt').write_text(process.stderr[-4000:])
+        return {'view_operations_passed': sum(1 for v in view.values() if v == 'passed'), 'route_points': data['route_points'],
+                'raw_sensor_points': data['raw_sensor_points'], 'continuously_played_boundaries': data['continuously_played_boundaries'],
+                'projection_modes': len(data['projection_modes']), 'reverse_playback_decreased': True,
+                'playback_advanced_to_frame': data.get('playback_advanced_to_frame')}
+
     attempt(results, 'decode_and_features', strict, decode_and_features)
     if results['decode_and_features']['passed']:
         attempt(results, 'view_operations', strict, view_operations)
         attempt(results, 'exports', strict, exports)
+        attempt(results, 'gui_check', gui_strict, gui_check)
     else:
-        results['view_operations'] = results['exports'] = {'passed': False, 'error': 'skipped: system H.264 decoder unavailable'}
+        results['view_operations'] = results['exports'] = results['gui_check'] = {'passed': False, 'error': 'skipped: system H.264 decoder unavailable'}
     assert hashlib.sha256(image.read_bytes()).hexdigest() == digest, 'input image changed'
     return results
 
@@ -280,7 +311,8 @@ def main():
         view_report = json.loads(view_path.read_text()) if view_path.exists() else {'passed': False, 'checks': []}
         assert view_run.returncode == 0 and view_report['passed'], (view_run.stderr, [c for c in view_report['checks'] if not c['passed']])
         assert {c['name'] for c in view_report['checks']} >= {'flipHorizontal', 'flipVertical', 'rotateClockwise90', 'areaZoomTopLeft', 'zoom2PanRight'}
-        media = media_smoke(binary, root, os.environ.get('PCB_REQUIRE_MEDIA_EXPORT') == '1')
+        media = media_smoke(binary, root, os.environ.get('PCB_ALLOW_MEDIA_UNAVAILABLE') != '1', os.environ.get('PCB_REQUIRE_GUI_CHECK') == '1',
+                            os.environ.get('PCB_GUI_EVIDENCE_DIR'))
     summary = {'passed': True, 'scope': 'Generated card headers plus a generated H.264/PCM/GPS test pattern; no physical SD or private media; GUI is not exercised in CI',
                'continuous_recordings': 1, 'storage_blocks': 3, 'indexed_frames': 6,
                'catalog_validated_frames': results[0]['validated_frames'],
