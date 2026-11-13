@@ -159,29 +159,29 @@ final class WindowsBackupWriterTests: XCTestCase {
         XCTAssertEqual(plan.parts.map(\.fileName),["0000001000_20261111_202520.bak"])
     }
 
+    func testNameCounterKeepsTheFirstIntactSerialWhenTheFirstBlockStillStartsAtOrdinalZero() throws {
+        // Genuine rec1: the first block's metadata says ordinal 0 although its first packets were overwritten; the name carried the
+        // serial of the first intact packet unchanged (here the packet at sector 17 with serial 1001).
+        var d = CatalogTests().fixture([Spec(record:10,start:true)])
+        stamp(&d,[12,17],counter:1000,second:20)
+        d.replaceSubrange(12*512..<17*512,with:Data(count:5*512))
+        let l = try load(d)
+        XCTAssertEqual(l.recordings.count,1); XCTAssertEqual(l.recordings[0].packets.count,1)
+        let plan = try WindowsBackupWriter.plan(source:l.source,index:l.index,recordings:l.recordings,options:.init(created:created,timeZone:tokyo))
+        XCTAssertEqual(plan.parts.map(\.fileName),["0000001001_20261111_202520.bak"])
+    }
+
     func testStartCounterRuleReproducesTheGenuineNames() {
-        func chunk(_ packets:Int,header:Bool,ordinal:UInt32?,recording:Int = 0) -> WindowsBackupChunk {
-            var c = WindowsBackupChunk(sectors:0..<12,packets:packets,hasHeaderPair:header,hasTrailerPair:true,firstClock:nil)
-            c.recording = recording; c.firstOrdinal = ordinal
-            return c
-        }
-        func rule(_ first:UInt32,_ chunks:[WindowsBackupChunk]) -> UInt32 { WindowsBackupWriter.startCounter(firstPacketCounter:first,chunks:chunks) }
-        let block = chunk(450,header:true,ordinal:nil)
-        // (serial of the first intact packet, ordinal of its block) -> serial in the genuine part name, from four genuine backups.
-        var at = block; at.firstOrdinal = 4_950
-        XCTAssertEqual(rule(29_689_588,[at]),29_684_638)
-        at.firstOrdinal = 15_750; XCTAssertEqual(rule(29_962_007,[at]),29_946_257)
-        at.firstOrdinal = 68_850; XCTAssertEqual(rule(29_943_287,[at]),29_874_437)
-        at.firstOrdinal = 900;    XCTAssertEqual(rule(29_698_766,[at]),29_697_866)
-        at.firstOrdinal = 0;      XCTAssertEqual(rule(29_604_184,[at]),29_604_184)
-        // A first chunk without header pair (2 packets) takes the ordinal from the block that follows it: frame 7-2 = 5.
-        XCTAssertEqual(rule(1005,[chunk(2,header:false,ordinal:nil),chunk(450,header:true,ordinal:7)]),1000)
-        // Another recording, an impossible ordinal or no chunk at all never change the serial.
-        XCTAssertEqual(rule(1005,[chunk(2,header:false,ordinal:nil),chunk(450,header:true,ordinal:7,recording:1)]),1005)
-        XCTAssertEqual(rule(1005,[chunk(9,header:false,ordinal:nil),chunk(450,header:true,ordinal:7)]),1005)
-        XCTAssertEqual(rule(1005,[]),1005)
-        // Serials are 32-bit counters.
-        at.firstOrdinal = 5; XCTAssertEqual(rule(3,[at]),UInt32.max-1)
+        func rule(_ first:UInt32,_ ordinal:UInt32?) -> UInt32 { WindowsBackupWriter.startCounter(firstPacketCounter:first,firstBlockOrdinal:ordinal) }
+        // (serial of the first intact packet, ordinal of the first block) -> serial in the genuine part name, six genuine backups.
+        XCTAssertEqual(rule(29_689_588,4_950),29_684_638)
+        XCTAssertEqual(rule(29_962_007,15_750),29_946_257)
+        XCTAssertEqual(rule(29_943_287,68_850),29_874_437)
+        XCTAssertEqual(rule(29_698_766,900),29_697_866)
+        XCTAssertEqual(rule(29_604_184,0),29_604_184)
+        // A first block without metadata gives no ordinal; serials are 32-bit counters.
+        XCTAssertEqual(rule(1005,nil),1005)
+        XCTAssertEqual(rule(3,5),UInt32.max-1)
     }
 
     func testPartsAreNotLimitedToElevenChunks() throws {
