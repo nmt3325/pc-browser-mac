@@ -105,12 +105,27 @@ def main():
         assert invalid.returncode != 0
         unchanged = hashlib.sha256(image.read_bytes()).digest() == hashlib.sha256(original).digest()
         assert unchanged
+        # Original-menu inventory: complete, unique, and every entry carries a status and an explanation.
+        inventory_path = root / 'legacy-inventory.json'
+        inventory_run = subprocess.run([str(binary), '--legacy-inventory', str(inventory_path)], capture_output=True, text=True, timeout=60)
+        if inventory_run.returncode:
+            raise RuntimeError(inventory_run.stdout + inventory_run.stderr)
+        inventory = json.loads(inventory_path.read_text())
+        entries = inventory['entries']
+        assert inventory['commands'] == len(entries) == len({e['id'] for e in entries}), inventory['commands']
+        assert inventory['models'] == 44 and inventory['menu_bar_commands'] == 93, inventory
+        assert all(e['reason'] and e['mac'] and e['status'] for e in entries)
+        assert sum(inventory['statuses'].values()) == inventory['commands']
+        assert next(e for e in entries if e['id'] == 370)['status'] == 'refusedByPolicy'
+        again = subprocess.run([str(binary), '--legacy-inventory', str(inventory_path)], capture_output=True, text=True, timeout=60)
+        assert again.returncode != 0, 'inventory output must not overwrite an existing file'
     summary = {'passed': True, 'scope': 'Generated synthetic headers only; no H.264/PCM decoding, GUI, physical SD or private media',
                'continuous_recordings': 1, 'storage_blocks': 3, 'indexed_frames': 6,
                'catalog_validated_frames': results[0]['validated_frames'],
                'lazy_loaded_validated_frames': results[1]['validated_frames'], 'input_sha256_unchanged': unchanged,
                'raw_search_no_video_decode': True, 'report_csv_json': True, 'image_copy_sha256_readback': True,
-               'existing_copy_and_invalid_query_refused': True}
+               'existing_copy_and_invalid_query_refused': True,
+               'legacy_inventory_commands': inventory['commands'], 'legacy_inventory_statuses': inventory['statuses']}
     output.write_text(json.dumps(summary, indent=2) + '\n')
     print(json.dumps(summary))
 
