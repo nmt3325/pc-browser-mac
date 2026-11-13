@@ -289,6 +289,31 @@ def main():
         assert refused.returncode != 0 and copy.read_bytes() == original
         invalid = subprocess.run([str(binary), '--inspect', str(image), '--catalog-only', '--raw-query', '--raw-event', '256'], capture_output=True, text=True, timeout=60)
         assert invalid.returncode != 0
+        # Windows-compatible BAK output (BDRBACKUP___ run folder): write the generated card, verify it byte for byte,
+        # re-open the run folder as a card source and write it again; the second run must be byte-identical to the first.
+        bak_one, bak_two = root / 'bak-one', root / 'bak-two'
+        bak_one.mkdir()
+        bak_two.mkdir()
+        bak_options = ['--bak-created', '20261113_223419', '--bak-time-zone', 'Asia/Tokyo', '--bak-key-index', '116']
+        bak_report = root / 'bak-write.json'
+        run_cli(binary, '--inspect', image, '--catalog-only', '--bak-write', bak_one, *bak_options, '--bak-verify', '--report', bak_report, timeout=120)
+        bak = load_json(bak_report)['bak_write']
+        assert bak['folder'] == '20261113_223419' and bak['parts'] == 1 and bak['chunks'] == 3 and bak['reopened_matches'], bak
+        assert bak['verified_extents'] == 6 and bak['mirror_pair_included'] is False and bak['header_pairs'] == 3, bak
+        written = sorted((bak_one / bak['folder']).glob('*.bak'))
+        assert len(written) == 1 and written[0].name == bak['part_files'][0], (written, bak)
+        head = written[0].read_bytes()
+        assert head[:12] == b'BDRBACKUP___' and head[22] == 116 and list(head[16:22]) == [26, 11, 13, 22, 34, 19], head[:48]
+        assert int.from_bytes(head[24:32], 'little') == 6 and int.from_bytes(head[32:40], 'little') == len(head) == 48 + 6 * 32 + bak['bytes'], bak
+        assert hashlib.sha256(image.read_bytes()).digest() == hashlib.sha256(original).digest()
+        again_report = root / 'bak-again.json'
+        run_cli(binary, '--inspect', bak_one / bak['folder'], '--catalog-only', '--bak-write', bak_two, *bak_options, '--bak-verify', '--report', again_report, timeout=120)
+        again_bak = load_json(again_report)
+        assert again_bak['windows_backup']['parts'] == 1 and again_bak['bak_write']['reopened_matches'], again_bak
+        second = sorted((bak_two / bak['folder']).glob('*.bak'))
+        assert [f.name for f in second] == [written[0].name] and second[0].read_bytes() == head, 'BAK -> BAK must be byte-identical'
+        existing = subprocess.run([str(binary), '--inspect', str(image), '--catalog-only', '--bak-write', str(bak_one), *bak_options], capture_output=True, text=True, timeout=60)
+        assert existing.returncode != 0 and sorted(p.name for p in (bak_one / bak['folder']).iterdir()) == [written[0].name], 'existing BAK run folder must be refused'
         unchanged = hashlib.sha256(image.read_bytes()).digest() == hashlib.sha256(original).digest()
         assert unchanged
         # Original-menu inventory: complete, unique, and every entry carries a status and an explanation.
@@ -318,7 +343,7 @@ def main():
                'catalog_validated_frames': results[0]['validated_frames'],
                'lazy_loaded_validated_frames': results[1]['validated_frames'], 'input_sha256_unchanged': unchanged,
                'raw_search_no_video_decode': True, 'report_csv_json': True, 'image_copy_sha256_readback': True,
-               'existing_copy_and_invalid_query_refused': True,
+               'existing_copy_and_invalid_query_refused': True, 'windows_bak_write_verify_roundtrip': True,
                'legacy_inventory_commands': inventory['commands'], 'legacy_inventory_statuses': inventory['statuses'],
                'view_transform_pixel_checks': len(view_report['checks']), 'media': media}
     output.write_text(json.dumps(summary, indent=2) + '\n')
