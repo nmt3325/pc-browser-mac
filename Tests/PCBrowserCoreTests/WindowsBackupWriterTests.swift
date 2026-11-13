@@ -147,6 +147,38 @@ final class WindowsBackupWriterTests: XCTestCase {
         XCTAssertEqual(plan.parts.map(\.fileName),["0000001000_20261111_202520.bak","0000001000_20261111_202521.bak"])
     }
 
+    func testPartsAreNotLimitedToElevenChunks() throws {
+        // Genuine run: one part holds 12 chunks (17 table entries); only the byte limit closes parts.
+        let specs = (0..<12).map { Spec(record:UInt32(10+7*$0),root:10,ordinal:UInt32($0),start:$0 == 0,frames:1) }
+        let l = try load(CatalogTests().fixture(specs))
+        XCTAssertEqual(l.recordings.count,1)
+        let plan = try WindowsBackupWriter.plan(source:l.source,index:l.index,recordings:l.recordings,options:.init(created:created,timeZone:tokyo))
+        XCTAssertEqual(plan.parts.map { $0.chunks.count },[12])
+        XCTAssertEqual(plan.extents(for:plan.parts[0]).count,15)
+        // The explicit option still works for callers that want a table limit.
+        let limited = try WindowsBackupWriter.plan(source:l.source,index:l.index,recordings:l.recordings,options:.init(maxChunksPerPart:11,created:created,timeZone:tokyo))
+        XCTAssertEqual(limited.parts.map { $0.chunks.count },[11,1])
+    }
+
+    func testBlockCutByTheRingEndIsNeverSplitAcrossParts() throws {
+        // Stream order X (record 34, 4 frames), P (record 22, ordinal 4: short block at the ring end), Q (record 10, ordinal 6:
+        // its continuation after the wrap, not aligned to the 4-frame block size).
+        let specs = [Spec(record:10,root:34,ordinal:6),
+                     Spec(record:22,root:34,ordinal:4,generation:67),
+                     Spec(record:34,root:34,generation:67,start:true,frames:4)]
+        let l = try load(CatalogTests().fixture(specs))
+        XCTAssertEqual(l.recordings.count,1)
+        func parts(_ blockFrames: Int) throws -> [[Range<UInt64>]] {
+            try WindowsBackupWriter.plan(source:l.source,index:l.index,recordings:l.recordings,
+                                         options:.init(maxChunkBytesPerPart:20_000,blockFrameCount:blockFrames,created:created,timeZone:tokyo)).parts.map { $0.chunks.map(\.sectors) }
+        }
+        // 11,264 B + 6,144 B would fit, but the second 6,144 B piece belongs to the same block: the pair opens the next part.
+        XCTAssertEqual(try parts(4),[[34..<56],[22..<34,10..<22]])
+        XCTAssertEqual(try parts(0),[[34..<56,22..<34],[10..<22]])
+        // An aligned ordinal (a block that merely ends at the wrap) is an ordinary chunk.
+        XCTAssertEqual(try parts(2),[[34..<56,22..<34],[10..<22]])
+    }
+
     func testNameClashIsResolvedByAdvancingTheCounter() throws {
         var d = CatalogTests().fixture(CatalogTests().three)
         stamp(&d,[12,17],counter:500,second:20); stamp(&d,[24,29],counter:502,second:20); stamp(&d,[36,41],counter:504,second:20)
