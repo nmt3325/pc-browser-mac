@@ -29,6 +29,7 @@ Legend: `[x]` verified or explicitly documented; `[ ]` incomplete. Implementatio
   - [ ] Splits, writer, PC Viewer, full copy and restore.
 - [ ] Model/FW identity and recording configuration editor, proven settings encoding and safe copied-image application.
   - [x] Static Deep recovery of the card layout strings and the 50 `set.ini` key names recognized by the original parser (names only; see `docs/deep-full-port.md`).
+  - [x] Static Deep recovery of the parser's line grammar (plain and indexed `KEY<n>=value` forms) and the in-memory settings-object field offsets for all 50 keys (offsets/widths only; units, value domains, required-key rule, dialog-control and model mapping still unknown; see `docs/deep-full-port.md`).
   - [ ] Key semantics, value domains/units, required-key rule, dialog-control and model mapping, verified on a copied card image (the full-card CONFIG has only `VERSION.INI`; no `SET.INI` sample is available).
 - [ ] Password, erase/format and FW updates: recover exact algorithms; require device-specific confirmation before original media operations.
 
