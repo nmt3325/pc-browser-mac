@@ -110,13 +110,24 @@ extension BrowserModel {
             }
         }catch{errorMessage=error.localizedDescription}
     }
-    func openKMLInEarth(_ url:URL) {
+    func openKMLInEarth(_ url:URL, completion: ((NSRunningApplication?, Error?) -> Void)? = nil) {
         let workspace=NSWorkspace.shared
-        guard let app=["com.google.GoogleEarthPro","com.google.GoogleEarthPlus","com.google.GoogleEarth"].compactMap({workspace.urlForApplication(withBundleIdentifier:$0)}).first else {
-            errorMessage="KMLは保存済みです。Google Earthが見つからないため自動起動しませんでした";return
+        // The current signed Google Earth Pro uses an uppercase "Google".
+        // Keep older bundle IDs without assuming LaunchServices is case-insensitive.
+        let identifiers=["com.Google.GoogleEarthPro","com.google.GoogleEarthPro","com.google.GoogleEarthPlus","com.google.GoogleEarth"]
+        guard url.isFileURL, url.pathExtension.lowercased()=="kml", FileManager.default.fileExists(atPath:url.path) else {
+            let error=BrowserError.invalid("保存済みのKMLファイルを指定してください")
+            errorMessage=error.localizedDescription;completion?(nil,error);return
         }
-        workspace.open([url],withApplicationAt:app,configuration:NSWorkspace.OpenConfiguration()){_,error in
-            if let error {Task{@MainActor [weak self] in self?.errorMessage="KMLは保存済みです。Google Earthの起動: "+error.localizedDescription}}
+        guard let app=identifiers.compactMap({workspace.urlForApplication(withBundleIdentifier:$0)}).first else {
+            let error=BrowserError.io("KMLは保存済みです。Google Earthが見つからないため自動起動しませんでした")
+            errorMessage=error.localizedDescription;completion?(nil,error);return
+        }
+        workspace.open([url],withApplicationAt:app,configuration:NSWorkspace.OpenConfiguration()){application,error in
+            Task{@MainActor [weak self] in
+                if let error {self?.errorMessage="KMLは保存済みです。Google Earthの起動: "+error.localizedDescription}
+                completion?(application,error)
+            }
         }
     }
     func importNMEA() {

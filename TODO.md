@@ -30,7 +30,7 @@ Legend: `[x]` verified or explicitly documented; `[ ]` incomplete. Implementatio
 
 ## Progress
 - Baseline source copied before modification. No original card/image writes performed.
-- Goal is in progress, not achieved. Automatic persistence service is not available in this host; this file and the Notion task page preserve checkpoints.
+- Goal is in progress, not achieved. Native goal service is unavailable; the durable contract and an active bounded keep-awake (through 2026-11-13 19:25 JST) preserve execution. Never use its completion token before the original-feature checklist is verified.
 
 ## Additional discovered features
 - [x] Recording report/notes: CSV/JSON/PDF, reference frames and local notes pass build-6 native tests.
@@ -52,3 +52,7 @@ Legend: `[x]` verified or explicitly documented; `[ ]` incomplete. Implementatio
 - Build 8 / Actions 43381381704, commit e5d424d2e7993a55628016b463b51dccc08930d4: 112 tests, zero failures. Retains every forward pair check while expanding telemetry only at published/final boundaries. Exact artifact checksum/commit/build/signature, 1,200-frame media, exports, GUI continuous boundaries and all nine projections passed on the new dc Mac; main own-view capture inspected.
 - Interleaved header-only comparison, three runs each: build-7 catalog 19.182/15.504/11.987 s; build-8 17.609/13.102/12.348 s. Catalog IDs, all block LBAs/counts/ordinals, 152,400 reads and input size/mtime match. Medians 15.504 vs 13.102 s, but strong cache/time variance and the final pair reversing prevent an isolated speedup claim. First-row median 0.002123 s.
 - Native sample of build 8 shows the active scanner mostly waiting in pread. Next checkpoint: recover/verify original control/block references rather than relaxing pair validation or adding a stale persistent cache. Whole-card media and physical SD remain unverified.
+
+## Build 9 work in progress
+- Explicit Google Earth launch now recognizes the signed app's actual `com.Google.GoogleEarthPro` bundle ID, propagates LaunchServices completion, and has a separately opt-in native integration check. CI and exact-artifact/Earth document verification are pending.
+- BAK IO constructor and fixed XOR table are proven by Deep plus independent read-only checks; original-application interoperability and part mapping remain in progress, not complete.

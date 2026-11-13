@@ -166,6 +166,20 @@ final class ScanCancellation: @unchecked Sendable {
         try captureOwnView(reportView,to:folder.appendingPathComponent("recording-report.png"))
         model.showReport=false;try await Task.sleep(nanoseconds:300_000_000)
         result["settings_and_report_views_captured"]=true;result["report_notes_local_roundtrip"]=true
+        if CommandLine.arguments.contains("--ui-check-earth") {
+            var style=TrackStyle();style.showPoints=true;style.lineRGB="12A4E0";style.pointRGB="E06012";style.alpha=173;style.width=7;style.density=17
+            let kml=folder.appendingPathComponent("explicit-earth-\(UUID().uuidString).kml")
+            try Data(TrackExport.kml([r],datum:model.datum,name:"PC Browser explicit integration check",style:style).utf8).write(to:kml,options:.withoutOverwriting)
+            let application:NSRunningApplication = try await withCheckedThrowingContinuation { continuation in
+                model.openKMLInEarth(kml){application,error in
+                    if let error {continuation.resume(throwing:error)}
+                    else if let application {continuation.resume(returning:application)}
+                    else {continuation.resume(throwing:BrowserError.io("Google Earthの起動結果がありません"))}
+                }
+            }
+            guard !application.isTerminated else{throw BrowserError.io("Google Earthが起動直後に終了しました")}
+            result["earth_launch"]=["explicit_opt_in":true,"bundle_identifier":application.bundleIdentifier ?? "","process_id":application.processIdentifier,"kml":kml.lastPathComponent,"scope":"LaunchServices open completion; verify Earth document UI separately"] as [String:Any]
+        }
     }
     @objc func openImage() { model.openPanel() }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
