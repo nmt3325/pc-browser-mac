@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
+import PDFKit
 import PCBrowserCore
 
 extension BrowserModel {
@@ -16,14 +17,15 @@ extension BrowserModel {
         do{try MediaExport.still(image,to:u,jpeg:jpeg);status="静止画を書き出しました"}catch{errorMessage=error.localizedDescription}
     }
     func exportLog(_ type:String) {
-        let summaries=selectedRecordings;guard let source,!summaries.isEmpty,let u=destination("PCBrowser-route",extension:type) else{return};let datum=datum
+        let summaries=selectedRecordings;guard let source,!summaries.isEmpty,let u=destination("PCBrowser-route",extension:type) else{return};let datum=datum,style=trackStyle,launchEarth=openEarthAfterExport
         performExport(type.uppercased()+"書き出し"){flag,progress in
             if flag.cancelled{throw BrowserError.io("キャンセルしました")}
             var records:[Recording]=[]
             for (i,r) in summaries.enumerated(){records.append(try CatalogScanner.loadRecording(r,source:source,cancelled:{flag.cancelled}));progress(Double(i+1)/Double(summaries.count)*0.8)}
             let text:String
-            switch type {case "kml":text=TrackExport.kml(records,datum:datum);case "gpx":text=TrackExport.gpx(records,datum:datum);default:text=TrackExport.csv(records,datum:datum)}
+            switch type {case "kml":text=TrackExport.kml(records,datum:datum,style:style);case "gpx":text=TrackExport.gpx(records,datum:datum);default:text=TrackExport.csv(records,datum:datum)}
             try Data(text.utf8).write(to:u,options:.withoutOverwriting);progress(1)
+            if type=="kml",launchEarth {await MainActor.run{self.openKMLInEarth(u)}}
         }
     }
     func exportAudio() {
@@ -36,11 +38,16 @@ extension BrowserModel {
             try clip.wav(range:begin..<end).write(to:u,options:.withoutOverwriting);progress(1)
         }
     }
-    func exportMovie() {
-        guard let source,let r=recording,let u=destination("PCBrowser-video",extension:"mp4") else{return}
+    func exportMovie(avi: Bool = false) {
+        guard let source,let r=recording,let u=destination("PCBrowser-video",extension:avi ? "avi":"mp4") else{return}
+        if useExternalGPS && gpsSynchronization == nil {errorMessage="外部GPSのタイムゾーンとログを指定してください。元GPSに戻す場合は外部ログの使用をオフにしてください";return}
         var options=MovieExportOptions(frames:exportFrames);options.projection=projection;options.subtitles=exportSubtitles;options.datum=datum
+        options.subtitleFields=subtitleFields;options.externalGPS=gpsSynchronization
         let captured=options
-        performExport("音声付きMP4書き出し"){flag,progress in try await MediaExport.movie(source:source,recording:r,options:captured,to:u,cancelled:{flag.cancelled},progress:progress)}
+        performExport(avi ? "音声付きMotion JPEG AVI書き出し":"音声付きMP4書き出し"){flag,progress in
+            if avi {_ = try await MediaExport.avi(source:source,recording:r,options:captured,to:u,cancelled:{flag.cancelled},progress:progress)}
+            else {try await MediaExport.movie(source:source,recording:r,options:captured,to:u,cancelled:{flag.cancelled},progress:progress)}
+        }
     }
     func backup() {
         guard let source,let index,!selectedRecordings.isEmpty,let u=destination("PCBrowser-selected",extension:"pcbbackup") else{return}
@@ -54,17 +61,17 @@ extension BrowserModel {
     func exportSequence() {
         guard let source,let r=recording else{return};let panel=NSOpenPanel();panel.canChooseDirectories=true;panel.canChooseFiles=false;panel.title="静止画連続出力の保存先"
         guard panel.runModal() == .OK,let parent=panel.url else{return}
-        let range=exportFrames,settings=projection,out=parent.appendingPathComponent("PCBrowser-frames-\(UUID().uuidString.prefix(8))",isDirectory:true)
-        performExport("PNG連続出力"){flag,progress in
-            try FileManager.default.createDirectory(at:out,withIntermediateDirectories:false)
-            guard let first=stride(from:range.lowerBound,through:0,by:-1).first(where:{r.packets[$0].isIntra}) else{throw BrowserError.unsupported("Iフレームがありません")}
-            let decoder=NativeVideoDecoder(),projector=try NativeProjection()
-            for i in first..<range.upperBound {
-                if flag.cancelled{throw BrowserError.io("キャンセルしました。出力済みの画像は保存先に残っています")}
-                let p=r.packets[i],raw=try decoder.decode(source.read(at:p.payloadOffset,count:p.videoBytes),ordinal:i,fps:30)
-                if i>=range.lowerBound {try MediaExport.still(projector.render(raw,settings:settings,width:2560),to:out.appendingPathComponent(String(format:"frame-%08d.png",i)));progress(Double(i-range.lowerBound+1)/Double(range.count))}
+        do {
+            let indices=try sampledExportFrames(),settings=projection,out=parent.appendingPathComponent("PCBrowser-frames-\(UUID().uuidString.prefix(8))",isDirectory:true)
+            guard !indices.isEmpty else{return}
+            if indices.count>1000 {
+                let alert=NSAlert();alert.messageText="\(indices.count)枚のPNGを書き出します";alert.informativeText="大量の空き容量が必要です。間隔は設定画面で変更できます。";alert.addButton(withTitle:"書き出す");alert.addButton(withTitle:"キャンセル")
+                guard alert.runModal() == .alertFirstButtonReturn else{return}
             }
-        }
+            performExport("PNG連続出力"){flag,progress in
+                _ = try await FrameExport.sequence(source:source,recording:r,indices:indices,settings:settings,to:out,cancelled:{flag.cancelled},progress:progress)
+            }
+        } catch {errorMessage=error.localizedDescription}
     }
     func saveCalibration() {
         guard let u=destination("PCBrowser-view-preset",extension:"json") else{return}
@@ -85,28 +92,45 @@ extension BrowserModel {
         let operation=NSPrintOperation(view:view);operation.showsPrintPanel=true;operation.showsProgressPanel=true;operation.run()
     }
     func printContactSheet() {
-        pause();guard let source,let r=recording else{return};let range=exportFrames,settings=projection
-        guard !range.isEmpty else{return}
-        Task {
-            do {
-                let frames=try await Task.detached {() async throws ->[CGImage] in
-                    let decoder=FrameRenderer(source:source,packets:r.packets),projection=try NativeProjection()
-                    // A separate renderer is used so printing never changes the playback decoder.
-                    var frames:[CGImage]=[]
-                    for i in 0..<4 {
-                        let position=range.lowerBound+(range.count-1)*i/3
-                        let raw=try await decoder.render(position)
-                        frames.append(try projection.render(raw,settings:settings,width:1280))
-                    };return frames
-                }.value
-                let view=ContactSheetView(images:frames,title:r.startTime+" / CH \(r.channel)")
-                let operation=NSPrintOperation(view:view);operation.showsPrintPanel=true;operation.run()
-            }catch{errorMessage=error.localizedDescription}
+        pause();guard let source,let r=recording else{return}
+        do {
+            let indices=try sampledExportFrames(),settings=projection,layout=printFramesPerPage
+            guard !indices.isEmpty else{return}
+            let pages=(indices.count+layout-1)/layout
+            let alert=NSAlert();alert.messageText="\(indices.count)枚 / \(pages)ページを準備します";alert.informativeText="設定した間隔でIN / OUT範囲から抽出します。続いてプリンターと保存先を選べます。";alert.addButton(withTitle:"印刷を準備");alert.addButton(withTitle:"キャンセル")
+            guard alert.runModal() == .alertFirstButtonReturn else{return}
+            let pdf=FileManager.default.temporaryDirectory.appendingPathComponent("PCBrowser-print-\(UUID().uuidString).pdf")
+            performExport("ページ印刷の準備"){flag,progress in
+                defer{try? FileManager.default.removeItem(at:pdf)}
+                _ = try await FrameExport.printPDF(source:source,recording:r,indices:indices,framesPerPage:layout,settings:settings,to:pdf,cancelled:{flag.cancelled},progress:progress)
+                try await MainActor.run {
+                    guard let document=PDFDocument(url:pdf),let operation=document.printOperation(for:NSPrintInfo.shared,scalingMode:.pageScaleToFit,autoRotate:true) else{throw BrowserError.io("印刷ジョブを作成できません")}
+                    operation.showsPrintPanel=true;operation.showsProgressPanel=true;operation.run()
+                }
+            }
+        }catch{errorMessage=error.localizedDescription}
+    }
+    func openKMLInEarth(_ url:URL) {
+        let workspace=NSWorkspace.shared
+        guard let app=["com.google.GoogleEarthPro","com.google.GoogleEarthPlus","com.google.GoogleEarth"].compactMap({workspace.urlForApplication(withBundleIdentifier:$0)}).first else {
+            errorMessage="KMLは保存済みです。Google Earthが見つからないため自動起動しませんでした";return
+        }
+        workspace.open([url],withApplicationAt:app,configuration:NSWorkspace.OpenConfiguration()){_,error in
+            if let error {Task{@MainActor [weak self] in self?.errorMessage="KMLは保存済みです。Google Earthの起動: "+error.localizedDescription}}
         }
     }
     func importNMEA() {
-        let p=NSOpenPanel();p.title="NMEAログを開く（外部ログ・映像との自動同期なし）"
-        if p.runModal() == .OK,let u=p.url {do{let d=try Data(contentsOf:u);guard d.count<=32*1024*1024 else{throw BrowserError.invalid("ログが32 MiBを超えています")};let log=NMEAParser.parse(INIParser.decode(d));route=log.points.map{GeoCoordinate(latitude:$0.latitude,longitude:$0.longitude)};status="外部NMEA: \(log.points.count)点 / 不正チェックサム\(log.rejected)件。映像とは自動同期しません"}catch{errorMessage=error.localizedDescription}}
+        let p=NSOpenPanel();p.title="外部NMEAログを開く（同期は明示設定後のみ）"
+        guard p.runModal() == .OK,let u=p.url else{return}
+        do {
+            let size=(try FileManager.default.attributesOfItem(atPath:u.path)[.size] as? NSNumber)?.uint64Value ?? 0
+            guard size<=32*1024*1024 else{throw BrowserError.invalid("ログが32 MiBを超えています")}
+            let d=try Data(contentsOf:u);guard d.count<=32*1024*1024 else{throw BrowserError.invalid("ログが32 MiBを超えています")}
+            let log=NMEAParser.parse(INIParser.decode(d)),track=ExternalGPSTrack(points:log.points)
+            useExternalGPS=false;externalGPSTrack=track
+            externalGPSStatus="\(u.lastPathComponent): \(log.points.count)点（UTC付き \(track.points.count)点）/ 不正チェックサム\(log.rejected)件"
+            status=externalGPSStatus+"。タイムゾーンを指定し外部ログを有効にすると同期します"
+        }catch{errorMessage=error.localizedDescription}
     }
 }
 @MainActor enum DetachedWindows {static var windows:[NSWindow]=[]}
@@ -115,19 +139,3 @@ struct DetachedPreview:View {
     var body:some View {ZStack {Color.black;if let image=model.image {Image(nsImage:image).resizable().scaledToFit()}}.gesture(DragGesture().onChanged{v in model.projection.yaw=max(-180,min(180,Double(v.translation.width)/3))})}
 }
 
-final class ContactSheetView:NSView {
-    let images:[CGImage],title:String
-    init(images:[CGImage],title:String){self.images=images;self.title=title;super.init(frame:NSRect(x:0,y:0,width:760,height:560))}
-    required init?(coder:NSCoder){fatalError("init(coder:) is unavailable")}
-    override var isFlipped:Bool{true}
-    override func draw(_ dirtyRect:NSRect){
-        NSColor.white.setFill();bounds.fill()
-        (title as NSString).draw(at:NSPoint(x:12,y:12),withAttributes:[.font:NSFont.systemFont(ofSize:12),.foregroundColor:NSColor.black])
-        for (i,cg) in images.prefix(4).enumerated(){
-            let cell=NSRect(x:12+CGFloat(i%2)*374,y:40+CGFloat(i/2)*254,width:362,height:242)
-            let ratio=min(cell.width/CGFloat(cg.width),cell.height/CGFloat(cg.height))
-            let size=NSSize(width:CGFloat(cg.width)*ratio,height:CGFloat(cg.height)*ratio)
-            NSImage(cgImage:cg,size:size).draw(in:NSRect(x:cell.midX-size.width/2,y:cell.midY-size.height/2,width:size.width,height:size.height),from:.zero,operation:.sourceOver,fraction:1,respectFlipped:true,hints:nil)
-        }
-    }
-}
