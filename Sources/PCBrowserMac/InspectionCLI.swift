@@ -57,6 +57,9 @@ enum InspectionCLI {
             }
             if args.contains("--headers-fixture") {report["source_scope"]="Header-only structural fixture; no H.264/PCM payload, not a complete acquired disk image"}
             report["archive_sha256_verified"] = (source as? ArchiveSource)?.isHashVerified ?? false
+            if let bak=source as? WindowsBackupSource {
+                report["windows_backup"]=["format":"BDRBACKUP___","parts":1,"extents":bak.extents.count,"stored_bytes":bak.storedByteCount,"header_stored_bytes":bak.headerStoredBytes,"xor_key_index":Int(bak.keyIndex),"partial_copy":true,"cryptographic_integrity_available":false,"scope":"Read-only single-part BAK; source_bytes is an addressable virtual span, not original disk capacity"] as [String:Any]
+            }
             if let path=value("--copy-image",in:args) {
                 let summary=try ImageCopy.write(source:source,to:URL(fileURLWithPath:path))
                 report["image_copy"]=try JSONSerialization.jsonObject(with:JSONEncoder().encode(summary))

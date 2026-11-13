@@ -3,7 +3,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 CONFIG=${CONFIG:-release}
 VERSION=${APP_VERSION:-0.2.0-beta.2}
-BUILD=${APP_BUILD:-9}
+BUILD=${APP_BUILD:-10}
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$ ]]
 [[ "$BUILD" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]
 SHORT_VERSION=${VERSION%%-*}
@@ -34,6 +34,10 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <key>CFBundleDocumentTypes</key><array><dict>
 <key>CFBundleTypeName</key><string>SD Card Image</string>
 <key>CFBundleTypeExtensions</key><array><string>img</string></array>
+<key>CFBundleTypeRole</key><string>Viewer</string>
+</dict><dict>
+<key>CFBundleTypeName</key><string>PC Browser Windows Backup</string>
+<key>CFBundleTypeExtensions</key><array><string>bak</string></array>
 <key>CFBundleTypeRole</key><string>Viewer</string>
 </dict><dict>
 <key>CFBundleTypeName</key><string>PC Browser Mac Selected Recording Backup</string>
