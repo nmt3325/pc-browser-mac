@@ -63,9 +63,11 @@ final class ReportAndCopyTests: XCTestCase {
         for (second, slot) in clocks {
             var h = FormatTests().packet()
             h.replaceSubrange(10..<17, with: Data([26, 11, 11, 20, 25, UInt8(second), UInt8(slot)])); h[0x1d] = 30
+            h[0x26] = 7; h[0x27] = 1 // A valid coordinate also requires satellites and a fix.
             ExtendedTests().put(35 * 600000, 0x28, &h); ExtendedTests().put(139 * 600000, 0x2c, &h); ExtendedTests().put(1000, 0x32, &h)
             valid.append(try FramePacket.parse(h, sector: 10, diskBytes: 100 * 512))
         }
+        XCTAssertTrue(valid.allSatisfy { $0.telemetry.coordinate() != nil && $0.telemetry.speedKMH == 36 })
         let r = try RecordingReport.make(.init(id: "test", recordSector: 10, channel: 1, packets: valid))
         XCTAssertEqual(r.durationSeconds, 20 + 1.0 / 30, accuracy: 1e-8)
         XCTAssertEqual(r.speedCoverageSeconds, 1 + 1.0 / 30, accuracy: 1e-8)
