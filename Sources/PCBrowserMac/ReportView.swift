@@ -56,22 +56,22 @@ struct RecordingReportView: View {
 struct RawSensorSearchPreferences: View {
     @ObservedObject var model: BrowserModel
     var body: some View {
-        Form {
+        SettingsPane {
             Toggle("rawセンサー／イベント条件を使う", isOn: $model.rawQuery.enabled)
-            Section("絶対値が閾値以上（0 = 条件なし）") {
+            SettingsGroup("絶対値が閾値以上（0 = 条件なし）") {
                 Picker("加速度の軸", selection: $model.rawQuery.accelerationAxis) { ForEach(0..<3) { Text(["X", "Y", "Z"][$0]).tag($0) } }
                 TextField("加速度 |raw| ≥", value: $model.rawQuery.minimumAbsoluteAcceleration, format: .number)
                 Picker("ジャイロの軸", selection: $model.rawQuery.gyroAxis) { ForEach(0..<3) { Text(["X", "Y", "Z"][$0]).tag($0) } }
                 TextField("ジャイロ |raw| ≥", value: $model.rawQuery.minimumAbsoluteGyro, format: .number)
             }
-            Section("rawバイトの一致（10進）") {
+            SettingsGroup("rawバイトの一致（10進）") {
                 Stepper("イベント: \(model.rawQuery.eventByte < 0 ? "指定なし" : String(model.rawQuery.eventByte))", value: $model.rawQuery.eventByte, in: -1...255)
                 Picker("入力バイト", selection: $model.rawQuery.inputIndex) { Text("指定なし").tag(-1); ForEach(0..<6) { Text("raw[\($0)]").tag($0) } }
                 Stepper("入力値: \(model.rawQuery.inputValue)", value: $model.rawQuery.inputValue, in: 0...255)
             }
-            Text("条件は同じフレーム内ですべて一致した録画を表示します。物理G・角速度・ウインカー／ブレーキ・トリガ名の意味は推測しません。閾値は0…32768に制限します。").font(.caption).foregroundStyle(.secondary)
-            Text("未検索の録画は勝手に除外しません。条件変更後はサイドバーの「全録画の詳細検索」で確定してください。映像本体のデコードは行いません。").font(.caption).foregroundStyle(.secondary)
+            SettingsHelp("条件は同じフレーム内ですべて一致した録画を表示します。物理G・角速度・ウインカー／ブレーキ・トリガ名の意味は推測しません。閾値は0…32768に制限します。")
+            SettingsHelp("未検索の録画は勝手に除外しません。条件変更後はサイドバーの「全録画の詳細検索」で確定してください。映像本体のデコードは行いません。")
             Button("条件を解除") { model.rawQuery = RawSensorQuery() }
-        }.padding(16)
+        }
     }
 }

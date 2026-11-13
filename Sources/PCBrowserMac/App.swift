@@ -143,9 +143,18 @@ final class ScanCancellation: @unchecked Sendable {
         model.settingsTab=2;model.showSettings=true
         for _ in 0..<30{if window?.attachedSheet != nil{break};try await Task.sleep(nanoseconds:100_000_000)}
         guard let sheet=window?.attachedSheet,let view=sheet.contentView else{throw BrowserError.io("設定シートを表示できません")}
-        for (tab,name) in [(2,"export"),(1,"gps"),(3,"raw-search")] {
+        for (tab,name) in [(0,"projection"),(1,"gps"),(2,"export"),(3,"raw-search"),(4,"card")] {
             model.settingsTab=tab;try await Task.sleep(nanoseconds:400_000_000)
             try captureOwnView(view,to:folder.appendingPathComponent("settings-\(name).png"))
+            func scrollViews(_ parent: NSView) -> [NSScrollView] {
+                (parent as? NSScrollView).map { [$0] } ?? parent.subviews.flatMap { scrollViews($0) }
+            }
+            if let scroll = scrollViews(view).filter({ ($0.documentView?.bounds.height ?? 0) > $0.contentView.bounds.height + 10 }).max(by: { ($0.documentView?.bounds.height ?? 0) < ($1.documentView?.bounds.height ?? 0) }), let document = scroll.documentView {
+                let bottom = document.isFlipped ? max(0, document.bounds.height - scroll.contentView.bounds.height) : 0
+                scroll.contentView.scroll(to: NSPoint(x: 0, y: bottom)); scroll.reflectScrolledClipView(scroll.contentView)
+                try await Task.sleep(nanoseconds: 200_000_000)
+                try captureOwnView(view, to: folder.appendingPathComponent("settings-\(name)-bottom.png"))
+            }
         }
         model.showSettings=false;try await Task.sleep(nanoseconds:400_000_000)
         let notes=model.reportNotes();model.saveReportNotes("GUI checkpoint — raw semantics remain unclassified")
