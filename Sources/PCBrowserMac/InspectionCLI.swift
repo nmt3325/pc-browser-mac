@@ -44,7 +44,7 @@ enum InspectionCLI {
             var report:[String:Any]=["source_bytes":source.byteCount,"control_lba":result.control.sector,"first_record_lba":result.control.firstRecordSector,
                 "recordings":result.recordings.count,"storage_blocks":summaryBlocks,"indexed_frames_estimate":estimatedFrames,"validated_frames":result.validatedFrameCount,
                 "metadata_catalog":result.isMetadataCatalog,"catalog_seconds":catalogued-opened,"source_open_seconds":opened-began,"detail_load_seconds":detailed-catalogued,
-                "catalog_read_calls":result.catalogReadCalls,"backlink_blocks":result.backlinkBlocks,"recovery_recommended":result.recoveryRecommended,
+                "catalog_read_calls":result.catalogReadCalls,"catalog_boundary_parses":result.catalogBoundaryParses,"backlink_blocks":result.backlinkBlocks,"recovery_recommended":result.recoveryRecommended,
                 "loaded_recordings":result.recordings.filter(\.isLoaded).count,"partial_scan":result.isPartialScan,"rejected_candidates":result.rejectedCandidates,
                 "mode":"O_RDONLY","scanned_bytes":result.scannedBytes,"timing_note":"Card wall clock + nominal frame slots; no invented UTC; duplicate slot boundaries made monotonic."]
             report["first_catalog_row_seconds"] = firstRowSeconds ?? (catalogued-opened)

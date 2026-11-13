@@ -125,3 +125,70 @@ private final class ReadSpy:ByteSource,@unchecked Sendable {
     var isPartialCopy:Bool{ranges != nil}
     func read(at offset:UInt64,count:Int)throws->Data{calls.append((offset,count));return try MemorySource(data).read(at:offset,count:count)}
 }
+
+
+extension CatalogTests {
+    /// Hundreds of packets without the backlink accelerator. No media decoder
+    /// participates; the payload sectors are deliberately not valid video.
+    private func denseForwardFixture(_ frames:Int) -> Data {
+        var d=fixture([Spec(record:10,start:true)])
+        let count=(frames*5+30)*512
+        if count>d.count { d.append(Data(count:count-d.count)) }
+        for i in 0..<frames {
+            let l=UInt32(12+i*5)
+            var h=FormatTests().packet()
+            put(UInt32(i),4,&h);put(UInt32(i),0x1fc,&h)
+            put(l,0x1b0,&h);put(l+4,0x1b4,&h);put(10,0x1b8,&h)
+            put(1010,0x1dc,&h);put(68,0x1d8,&h);put(i==0 ? 0:l-5,0x1c0,&h)
+            h[8]=1;h[0x1d]=30
+            h.replaceSubrange(10..<17,with:Data([26,11,11,20,25,UInt8(20+i/30),UInt8(i%30)]))
+            put(UInt32(1000+i),0x32,&h);put(UInt32(i),0x1e8,&h)
+            let at=Int(l)*512
+            d.replaceSubrange(at..<at+512,with:h);put(0xffffd102,0,&h)
+            d.replaceSubrange(at+2048..<at+2560,with:h)
+        }
+        return d
+    }
+    func testForwardCatalogExpandsBoundariesNotEveryTelemetryFrame() throws {
+        let src=ReadSpy(denseForwardFixture(600))
+        var snapshots:[ImageIndex]=[]
+        let index=try CatalogScanner.scan(src,progress:{ i,_ in snapshots.append(i) })
+        let r=try XCTUnwrap(index.recordings.first),block=try XCTUnwrap(r.blocks.first)
+        XCTAssertEqual(index.recordings.count,1);XCTAssertEqual(index.frameCount,600)
+        XCTAssertEqual(index.validatedFrameCount,0);XCTAssertEqual(index.backlinkBlocks,0)
+        XCTAssertEqual(block.first.sequence,0);XCTAssertEqual(block.last.sequence,599)
+        XCTAssertEqual(block.last.rawField1E8,599);XCTAssertEqual(block.last.telemetry.speedRaw,1599)
+        XCTAssertLessThan(index.catalogBoundaryParses,100)
+        XCTAssertTrue(src.calls.allSatisfy{$0.1==512})
+        for snap in snapshots {
+            let b=try XCTUnwrap(snap.recordings.first?.blocks.first)
+            XCTAssertEqual(b.last.sequence+1,UInt32(b.frameCount))
+            XCTAssertEqual(b.last.rawField1E8,b.last.sequence)
+        }
+        src.calls=[]
+        let detail=try CatalogScanner.loadRecording(r,source:src)
+        XCTAssertEqual(detail.packets.count,600)
+        XCTAssertEqual(detail.packets.last?.headerSector,block.last.headerSector)
+        XCTAssertEqual(detail.packets.last?.telemetry.speedRaw,1599)
+        XCTAssertTrue(src.calls.allSatisfy{$0.1==512})
+    }
+    func testDeferredBoundaryStillRejectsCorruptIntermediatePair() throws {
+        var d=denseForwardFixture(600)
+        d[(12+123*5+4)*512+0x32] ^= 1
+        let index=try CatalogScanner.scan(MemorySource(d))
+        XCTAssertEqual(index.rejectedCandidates,1);XCTAssertTrue(index.recoveryRecommended)
+        XCTAssertEqual(index.frameCount,599)
+        let r=try XCTUnwrap(index.recordings.first)
+        XCTAssertEqual(r.blocks.last?.last.sequence,599)
+        XCTAssertThrowsError(try CatalogScanner.loadRecording(r,source:MemorySource(d)))
+    }
+    func testDeferredBoundaryFlushesAtExplicitScanLimit() throws {
+        let src=MemorySource(denseForwardFixture(600))
+        // From start LBA10: two record sectors plus exactly ten packet spans.
+        let index=try CatalogScanner.scan(src,limitBytes:52*512)
+        XCTAssertTrue(index.isPartialScan);XCTAssertEqual(index.frameCount,10)
+        let b=try XCTUnwrap(index.recordings.first?.blocks.first)
+        XCTAssertEqual(b.last.sequence,9);XCTAssertEqual(b.last.rawField1E8,9)
+        XCTAssertEqual(index.validatedFrameCount,0)
+    }
+}
