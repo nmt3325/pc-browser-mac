@@ -10,6 +10,8 @@ final class RecordingSettingsEditor: ObservableObject {
     @Published var timeEnabled = false
     @Published var pickerDate = Date()
     @Published var angleDetection = false
+    /// The 「パスワード」 box as typed; empty = no password. Judged by `CardPassword.parse` like the original does on save.
+    @Published var passwordText = ""
     @Published private(set) var loaded = false
     @Published private(set) var problem: String?
     @Published private(set) var commandsAvailable = false
@@ -40,6 +42,7 @@ final class RecordingSettingsEditor: ObservableObject {
             inputURL = url
             original = state.snapshot.settings
             settings = state.snapshot.settings
+            passwordText = state.snapshot.settings.password.map(String.init) ?? ""
             commandState = commands
             commandsAvailable = commands != nil
             timeEnabled = opened.timeEnabled
@@ -55,15 +58,23 @@ final class RecordingSettingsEditor: ObservableObject {
         }
     }
 
+    var passwordEntry: CardPassword.Entry { CardPassword.parse(passwordText) }
+    /// The settings as edited, including what the password box holds (an invalid box counts as no password and blocks saving).
+    var currentSettings: RecordingSettings {
+        var s = settings
+        s.password = passwordEntry.value
+        return s
+    }
     var draft: RecordingSettingsDraft? {
         guard let t = try? CardLocalTime(date: pickerDate) else { return nil }
-        return RecordingSettingsDraft(settings: settings, timeEnabled: timeEnabled, time: t, angleDetection: angleDetection)
+        return RecordingSettingsDraft(settings: currentSettings, timeEnabled: timeEnabled, time: t, angleDetection: angleDetection)
     }
     var pickerText: String { (try? CardLocalTime(date: pickerDate).text) ?? "—" }
     var changeLines: [String] { draft?.summary(against: original, commands: commandState) ?? [] }
     var layoutChanged: Bool { settings.changesLayout(from: original) }
     var validationMessage: String? {
-        do { try settings.normalized().validate(); return nil } catch { return error.localizedDescription }
+        if let message = passwordEntry.message { return message }
+        do { try currentSettings.normalized().validate(); return nil } catch { return error.localizedDescription }
     }
     var canSave: Bool { loaded && validationMessage == nil && !changeLines.isEmpty }
     var frameRateChoices: [Int] { RecordingSettingsTables.availableFrameRateIndices(for: settings.mode) }
@@ -78,18 +89,40 @@ final class RecordingSettingsEditor: ObservableObject {
         Binding(get: { Double(self.settings.shockSensitivity) }, set: { self.settings.setEasySensitivity(Int($0.rounded())) })
     }
 
-    func resetToFactory() { settings = RecordingSettings.factoryDefault }
+    /// 「初期設定に戻す」 as the original does it: the recording settings go to the dialog defaults and both command rows are unticked;
+    /// SDカードID, パスワード and マルチバッテリー stay as they are.
+    func resetToDialogDefaults() {
+        settings = currentSettings.resettingToDialogDefaults()
+        timeEnabled = false
+        angleDetection = false
+    }
     func revert() {
         settings = original
+        passwordText = original.password.map(String.init) ?? ""
         timeEnabled = commandState?.timeFileExists ?? false
         pickerDate = openedDate
         angleDetection = commandState?.angleDetectionRequested ?? false
     }
     func setNow() { pickerDate = Date() }
 
+    /// Like the original, closing with unsaved changes asks first (here: unsaved = not yet written to a new copy).
+    func confirmDiscardIfNeeded() -> Bool {
+        guard loaded, !changeLines.isEmpty else { return true }
+        return PasswordPrompts.confirm(title: "記録設定", message: "設定が変更されています。\n新しいコピーへ保存せずに終了してよろしいですか？")
+    }
+
     func save(model: BrowserModel) {
         guard let url = inputURL, let current = draft else { return }
         if let message = validationMessage { model.errorMessage = message; return }
+        // The original's password steps come first: a new or changed password is typed again, clearing it is confirmed.
+        switch current.passwordCheck(against: original) {
+        case .none: break
+        case .reenter(let expected):
+            guard let typed = PasswordPrompts.ask(message: CardPassword.Message.reenter) else { return }
+            guard CardPassword.confirms(typed, expected: expected) else { PasswordPrompts.showError(CardPassword.Message.wrong); return }
+        case .confirmClear:
+            guard PasswordPrompts.confirm(title: "パスワード", message: CardPassword.Message.confirmClear) else { return }
+        }
         let files = current.commandFiles(from: commandState)
         let settingsChanged = !current.settings.normalized().differences(from: original.normalized()).isEmpty
         if settingsChanged && current.settings.changesLayout(from: original) {
@@ -123,7 +156,7 @@ struct RecordingSettingsView: View {
             HStack {
                 Text("記録設定").font(.title2)
                 Spacer()
-                Button("閉じる") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("閉じる") { if editor.confirmDiscardIfNeeded() { dismiss() } }.keyboardShortcut(.cancelAction)
             }
             if let problem = editor.problem {
                 SettingsHelp(problem)
@@ -192,6 +225,10 @@ struct RecordingSettingsView: View {
                 labeled("SDカードID") {
                     TextField("半角24文字以内", text: $editor.settings.cardID).textFieldStyle(.roundedBorder).frame(width: 260)
                 }
+                labeled("パスワード") {
+                    TextField("1000～9999（空欄 = なし）", text: $editor.passwordText).textFieldStyle(.roundedBorder).frame(width: 260)
+                }
+                SettingsHelp("4桁のパスワードを設定したカードは、原版・この版とも開くときにパスワードを求め、違うと読み込みません（録画データは暗号化されません）。設定・変更の保存前にもう一度入力して確認し、空欄にして解除するときも確認します。")
             }
             SettingsGroup("Gセンサー") {
                 Toggle("Gセンサーを記録する", isOn: $editor.settings.gSensorEnabled)
@@ -254,7 +291,7 @@ struct RecordingSettingsView: View {
                 Text("記録区画の構成が変わります。保存前に確認を表示します。").font(.caption).foregroundStyle(.orange)
             }
             HStack {
-                Button("初期設定に戻す") { editor.resetToFactory() }
+                Button("初期設定に戻す") { editor.resetToDialogDefaults() }
                 Button("変更を取り消す") { editor.revert() }
                 Spacer()
                 Button("新しいコピーに保存…") { editor.save(model: model) }

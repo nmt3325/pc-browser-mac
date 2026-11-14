@@ -7,6 +7,9 @@ import PCBrowserCore
 /// `--settings-apply <image> --out <new.img> [--set key=value …] [--report <new.json>]` writes a NEW copy of the image with the changed
 /// settings (and/or command files); `--plan-only <new.json>` writes the plan instead (four sector hashes, no copy).
 /// The input is never opened for writing, and cards or mounted volumes are never written.
+/// `--password-check <image> [--card-password <text>]` runs the card-open gate of the app on an image (exit 0 = would load, 1 = refused).
+/// `--set reset=defaults` is the dialog's 「初期設定に戻す」 (card ID, password and multi-battery are kept; later `--set` keys override).
+/// A new or changed password needs `--confirm-password <same>` and clearing one needs `--confirm-clear-password`, like the dialog's prompts.
 enum SettingsCLI {
     struct Failure: Error { let message: String }
 
@@ -62,6 +65,8 @@ enum SettingsCLI {
         var settings: RecordingSettings
         var time: CardTimeRequest = .keep
         var angle: CardAngleRequest = .keep
+        /// `reset=defaults` was given: like 「初期設定に戻す」 it also unticks the date and angle rows (where the image has a CONFIG folder).
+        var resetRows = false
     }
     static func apply(_ pairs: [String], to base: RecordingSettings, now: Date) throws -> Request {
         var request = Request(settings: base)
@@ -95,6 +100,14 @@ enum SettingsCLI {
             case "accel": request.settings.accelerationSensitivity = try integer(value, key)
             case "steering": request.settings.steeringSensitivity = try integer(value, key)
             case "id": request.settings.cardID = value
+            case "reset":
+                guard value.lowercased() == "defaults" else { throw Failure(message: "reset には defaults を指定してください（\(value)）") }
+                request.settings = request.settings.resettingToDialogDefaults()
+                request.resetRows = true
+            case "password":
+                let entry = CardPassword.parse(["none", "off", "clear"].contains(value.lowercased()) ? "" : value)
+                if let message = entry.message { throw Failure(message: message) }
+                request.settings.password = entry.value
             case "time": request.time = try parseTime(value, now: now)
             case "angle": request.angle = try flag(value, key) ? .request : .cancel
             default: throw Failure(message: "未対応のキーです: \(key)")
@@ -111,6 +124,7 @@ enum SettingsCLI {
             "beep": s.beepEnabled, "gSensor": s.gSensorEnabled, "multiBattery": s.multiBatteryConnected, "easyMode": s.easyMode,
             "shockSensitivity": s.shockSensitivity, "accelerationSensitivity": s.accelerationSensitivity, "steeringSensitivity": s.steeringSensitivity,
             "cardID": s.cardID]
+        if let password = s.password { d["password"] = password } else { d["password"] = NSNull() }
         if RecordingSettingsTables.frameRates.indices.contains(s.frameRateIndex) { d["frameRate"] = RecordingSettingsTables.frameRates[s.frameRateIndex].label }
         if RecordingSettingsTables.eventWindows.indices.contains(s.eventWindowIndex) { d["eventWindow"] = RecordingSettingsTables.eventWindows[s.eventWindowIndex].label }
         if RecordingSettingsTables.historyHours.indices.contains(s.historyHoursIndex) { d["historyHours"] = RecordingSettingsTables.historyHours[s.historyHoursIndex] }
@@ -160,9 +174,22 @@ enum SettingsCLI {
                 "backupChannelMatches": state.backupChannelMatches, "commandFiles": describe(RecordingSettingsStore.readCommandState(source), source: source)]
             payload["locationSectors"] = [state.location.control, state.location.channel, state.location.backupControl, state.location.backupChannel]
             let s = state.snapshot.settings
-            print("mode=\(modeName(s.mode)) fps=\(s.frameRateIndex) event=\(s.eventWindowIndex) audio=\(s.audioEnabled) history=\(s.historyHoursIndex)/\(s.historyDoubleRate ? "double" : "normal") id=\(s.cardID)")
+            print("mode=\(modeName(s.mode)) fps=\(s.frameRateIndex) event=\(s.eventWindowIndex) audio=\(s.audioEnabled) history=\(s.historyHoursIndex)/\(s.historyDoubleRate ? "double" : "normal") id=\(s.cardID) password=\(s.password == nil ? "none" : "set")")
             if let report = InspectionCLI.value("--report", in: args) { try write(payload, to: report) }
             return 0
+        } catch { return fail(error) }
+    }
+
+    /// The app's card-open gate on an image: a card with a password loads only with the right `--card-password`.
+    static func passwordCheck(_ args: [String]) -> Int32 {
+        do {
+            guard let path = InspectionCLI.value("--password-check", in: args) else { return 64 }
+            let source = try FileByteSource(url: URL(fileURLWithPath: path))
+            guard let stored = CardPassword.required(in: source) else { print("locked=false load=allowed"); return 0 }
+            guard let typed = InspectionCLI.value("--card-password", in: args) else { print("locked=true load=refused (no password given)"); return 1 }
+            if CardPassword.unlocks(typed, stored: stored) { print("locked=true load=allowed"); return 0 }
+            print("locked=true load=refused (" + CardPassword.Message.wrong + ")")
+            return 1
         } catch { return fail(error) }
     }
 
@@ -173,8 +200,12 @@ enum SettingsCLI {
             let now = Date()
             let source = try FileByteSource(url: input)
             let state = try RecordingSettingsStore.read(source)
-            let request = try apply(values("--set", in: args), to: state.snapshot.settings, now: now)
+            var request = try apply(values("--set", in: args), to: state.snapshot.settings, now: now)
             let commandState = RecordingSettingsStore.readCommandState(source)
+            if request.resetRows, commandState != nil {
+                if request.time == .keep { request.time = .remove }
+                if request.angle == .keep { request.angle = .cancel }
+            }
             var actions: [CardCommandFile] = []
             if request.time != .keep || request.angle != .keep {
                 guard let current = commandState else { throw Failure(message: "このイメージのFAT16設定領域（CONFIGフォルダー）を読めないため、日時・角度検出の指定はできません（\(RecordingSettingsStore.commandFilesUnavailableReason(source) ?? "理由不明")）") }
@@ -189,6 +220,18 @@ enum SettingsCLI {
                 try write(payload, to: planPath)
                 print(plan.changesAnything || !actions.isEmpty ? "plan written" : "nothing to change")
                 return 0
+            }
+            switch CardPassword.Change.required(old: state.snapshot.settings.password, new: request.settings.password) {
+            case .none: break
+            case .reenter(let expected):
+                guard let typed = InspectionCLI.value("--confirm-password", in: args) else {
+                    throw Failure(message: CardPassword.Message.reenter.replacingOccurrences(of: "\n", with: " ") + "（--confirm-password に同じパスワードを指定）")
+                }
+                guard CardPassword.confirms(typed, expected: expected) else { throw Failure(message: CardPassword.Message.wrong) }
+            case .confirmClear:
+                guard args.contains("--confirm-clear-password") else {
+                    throw Failure(message: CardPassword.Message.confirmClear.replacingOccurrences(of: "\n", with: " ") + "（--confirm-clear-password で確認）")
+                }
             }
             guard let out = InspectionCLI.value("--out", in: args) else { throw Failure(message: "--out <新しいイメージ> を指定してください（入力は書き換えません）") }
             let summary = try RecordingSettingsStore.writeCopy(of: input, to: URL(fileURLWithPath: out), new: request.settings, commandFiles: actions, now: now)
