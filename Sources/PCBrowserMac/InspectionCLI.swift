@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import AVFoundation
+import PDFKit
 import PCBrowserCore
 
 enum InspectionCLI {
@@ -263,11 +264,18 @@ enum InspectionCLI {
                 let end=start+min(count,recording.packets.count-start),range=start..<end
                 var settings=ProjectionSettings();settings.mode=value("--projection",in:args).flatMap(ProjectionMode.init(rawValue:)) ?? .perspective;settings.night=args.contains("--night")
                 if let path=reportPDF {
-                    let summary=try RecordingReport.make(recording,notes:value("--report-notes",in:args) ?? "")
-                    let focus=value("--report-focus-frame",in:args).flatMap(Int.init) ?? recording.packets.count/2
-                    try await ReportExport.pdf(report:summary,source:source,recording:recording,currentFrame:focus,projection:settings,to:URL(fileURLWithPath:path))
+                    // The printed page of the original's report (one A4 page); event reports carry the five reference images.
+                    let notes=value("--report-notes",in:args) ?? ""
+                    let label=try EventList.entries(result,source:source).first{$0.id == recording.id}?.trigger
+                    let legacy=try LegacyReport.make(recording,eventLabel:label,deviceID:DeviceIdentity.read(from:source,control:result.control))
+                    let reference=legacy.thumbnailPacketIndices()
+                    var pictures:[CGImage?]=[]
+                    if legacy.kind == .event {pictures=await LegacyReportContent.renderThumbnails(source:source,packets:recording.packets,indices:reference,settings:settings)}
+                    let data=try LegacyReportPage.pdf(legacy,thumbnails:pictures,notes:notes)
+                    try data.write(to:URL(fileURLWithPath:path),options:.withoutOverwriting)
                     report["recording_report_pdf"]=path
-                    report["report_reference_frames"]=ReportExport.referenceFrames(recording:recording,currentFrame:focus)
+                    report["report_reference_frames"]=reference
+                    report["report_page"]=["kind":legacy.kind.rawValue,"pdf_bytes":data.count,"pages":PDFDocument(data:data)?.pageCount ?? 0,"pictures_rendered":pictures.compactMap{$0}.count] as [String:Any]
                 }
                 if let avi=value("--avi",in:args) {
                     var options=MovieExportOptions(frames:range);options.projection=settings;options.subtitles=args.contains("--subtitles");options.subtitleFields=args.contains("--subtitle-all") ? .all:.defaults
@@ -293,6 +301,7 @@ enum InspectionCLI {
                 var lists:[String:Any]=["video_sessions":result.continuousRecordings.count,"device_id":DeviceIdentity.read(from:source,control:result.control) ?? "—"]
                 let events=try EventList.entries(result,source:source)
                 lists["event_count"]=events.count
+                if let m=DeviceModelTable.identify(from:source,control:result.control){lists["model"]=["code":Int(m.code),"name":m.name,"list_index":m.index,"dialog_class":m.dialogClass,"window_title":m.windowTitle] as [String:Any]}
                 lists["events"]=events.map{(e)->[String:Any] in ["time":e.timeText,"trigger":e.trigger,"device":e.deviceID ?? "—","frames":e.frames,"blocks":e.blocks]}
                 if let layout=result.layout {
                     lists["layout"]=["normal_end":layout.normalEnd,"event_start":layout.eventStart,"event_end":layout.eventEnd,"journal_first":layout.history?.lowerBound ?? 0,"journal_records":layout.historyRecordCount] as [String:Any]

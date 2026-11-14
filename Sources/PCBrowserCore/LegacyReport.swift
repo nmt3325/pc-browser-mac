@@ -34,6 +34,13 @@ public struct LegacyReportFrame: Sendable, Equatable {
     public let gps: LegacyGPSFlag
     public let latitudeRaw: Int32, longitudeRaw: Int32, altitudeRaw: Int16
     public let trigger: EventTrigger.Sample
+    /// Direct construction for synthetic reports (tests and the GUI self-check); real rows come from `init(_:)`.
+    public init(phase: UInt8, clock: CardTimestamp?, deviceClock: CardTimestamp? = nil, speed: Int, acceleration: [Int16], gps: LegacyGPSFlag,
+                latitudeRaw: Int32 = 0, longitudeRaw: Int32 = 0, altitudeRaw: Int16 = 0, trigger: EventTrigger.Sample = .init(flags: 0, mask: 0)) {
+        self.phase = phase; self.clock = clock; self.deviceClock = deviceClock; self.speed = speed
+        self.acceleration = acceleration; self.gps = gps
+        self.latitudeRaw = latitudeRaw; self.longitudeRaw = longitudeRaw; self.altitudeRaw = altitudeRaw; self.trigger = trigger
+    }
     public init(_ packet: FramePacket) {
         let t = packet.telemetry
         phase = packet.channel; clock = t.clock; deviceClock = t.secondaryClock
@@ -67,6 +74,12 @@ public struct LegacyReport: Sendable {
     public let eventLabel: String
     /// The row that carries the trigger: the first frame whose header names a cause, else the first frame of the post phase.
     public let eventFrame: Int?
+
+    /// Direct construction for synthetic reports (tests and the GUI self-check); real reports come from `make`.
+    public init(kind: LegacyReportKind, frames: [LegacyReportFrame], packetIndices: [Int], deviceID: String, eventLabel: String, eventFrame: Int?) {
+        self.kind = kind; self.frames = frames; self.packetIndices = packetIndices; self.deviceID = deviceID
+        self.eventLabel = eventLabel; self.eventFrame = eventFrame
+    }
 
     /// Event recordings report only the trigger and post phases; the few pre-roll frames in front are not rows.
     /// `eventLabel` is the label of the event list; without it the label follows the rows' own trigger fields.
