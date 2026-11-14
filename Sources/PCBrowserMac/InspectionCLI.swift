@@ -46,8 +46,9 @@ enum InspectionCLI {
             let catalogued=ProcessInfo.processInfo.systemUptime
             let estimatedFrames=result.frameCount,summaryBlocks=result.blockCount
             let rawQueryRequested=args.contains("--raw-query"),reportPrefix=value("--recording-report-prefix",in:args),reportPDF=value("--recording-report-pdf",in:args)
-            let detailRequested=rawQueryRequested || reportPrefix != nil || reportPDF != nil
-            let loadAll=args.contains("--load-all") || rawQueryRequested || args.contains("--bak-write")
+            let legacyDir=value("--legacy-report-dir",in:args),legacyOnly=value("--legacy-report-only",in:args).map{Set($0.split(separator:",").map(String.init))}
+            let detailRequested=rawQueryRequested || reportPrefix != nil || reportPDF != nil || legacyDir != nil
+            let loadAll=args.contains("--load-all") || rawQueryRequested || args.contains("--bak-write") || legacyDir != nil
             let mediaRequested = !args.contains("--catalog-only") && (args.contains("--decode-check") || args.contains("--features-check") || value("--export-prefix",in:args) != nil || value("--movie",in:args) != nil || value("--avi",in:args) != nil || value("--print-pdf",in:args) != nil || value("--sequence-dir",in:args) != nil || reportPDF != nil)
             let maximum=value("--max-decode",in:args).flatMap(Int.init) ?? 180
             guard maximum>=0 else{throw BrowserError.invalid("--max-decode は0以上です（0=全フレーム）")}
@@ -55,6 +56,7 @@ enum InspectionCLI {
                 var budget=0
                 for i in result.recordings.indices {
                     if !loadAll,i>0,(!args.contains("--decode-check") || maximum>0 && budget>=maximum) {break}
+                    if let only=legacyOnly,!only.contains(result.recordings[i].id) {continue}
                     result.recordings[i]=try CatalogScanner.loadRecording(result.recordings[i],source:source)
                     budget += result.recordings[i].packets.count
                 }
@@ -140,6 +142,25 @@ enum InspectionCLI {
                 try encoder.encode(reports).write(to:URL(fileURLWithPath:prefix+".json"),options:.withoutOverwriting)
                 try Data(RecordingReport.csv(reports).utf8).write(to:URL(fileURLWithPath:prefix+".csv"),options:.withoutOverwriting)
                 report["recording_reports"]=reports.count
+            }
+            if let dir=legacyDir {
+                // The original's report files (集計 and データ CSV in Windows code page 932) for every loaded recording.
+                let folder=URL(fileURLWithPath:dir,isDirectory:true)
+                try FileManager.default.createDirectory(at:folder,withIntermediateDirectories:true)
+                let device=DeviceIdentity.read(from:source,control:result.control)
+                let entries=try EventList.entries(result,source:source)
+                let labels=Dictionary(entries.map{($0.id,$0.trigger)},uniquingKeysWith:{a,_ in a})
+                var written:[[String:Any]]=[]
+                for recording in result.recordings where recording.isLoaded && !recording.packets.isEmpty {
+                    let legacy=try LegacyReport.make(recording,eventLabel:labels[recording.id],deviceID:device)
+                    for (name,text) in [(legacy.summaryFileName,legacy.summaryCSV()),(legacy.dataFileName,legacy.dataCSV())] {
+                        try LegacyReport.encodeCP932(text).write(to:folder.appendingPathComponent(name),options:.withoutOverwriting)
+                    }
+                    written.append(["recording":recording.id,"kind":legacy.kind.rawValue,"rows":legacy.frames.count,"summary_file":legacy.summaryFileName,"data_file":legacy.dataFileName,
+                                    "average_speed":legacy.averageSpeedText,"maximum_speed":legacy.maximumSpeedText,"distance":legacy.distanceText(),"driving":LegacyReport.durationText(seconds:legacy.drivingSeconds),
+                                    "event_rows":legacy.eventCount])
+                }
+                report["legacy_reports"]=written
             }
             var viewTransform=ViewTransform()
             if let script=value("--view-ops",in:args) {
