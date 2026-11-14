@@ -15,11 +15,12 @@ struct BrowserView: View {
                     if model.showMap {mapPanel.frame(minWidth:240,idealWidth:300,maxWidth:450,minHeight:220)}
                 }.frame(maxHeight:.infinity)
                 playbackControls
-                TabView {
-                    metadata.tabItem{Label("録画情報",systemImage:"info.circle")}
-                    SensorPanel(model:model).tabItem{Label("センサー",systemImage:"waveform.path")}
-                    exportRange.tabItem{Label("書き出し範囲",systemImage:"scissors")}
-                    TriggerListPanel(model:model).tabItem{Label("トリガリスト",systemImage:"bolt.horizontal")}
+                TabView(selection:$model.bottomTab) {
+                    metadata.tabItem{Label("録画情報",systemImage:"info.circle")}.tag(BottomTab.info)
+                    SensorPanel(model:model).tabItem{Label("センサー",systemImage:"waveform.path")}.tag(BottomTab.sensors)
+                    exportRange.tabItem{Label("書き出し範囲",systemImage:"scissors")}.tag(BottomTab.range)
+                    TriggerListPanel(model:model).tabItem{Label("トリガリスト",systemImage:"bolt.horizontal")}.tag(BottomTab.triggers)
+                    AccelerationExtractionPanel(model:model,state:model.acceleration).tabItem{Label("映像抽出",systemImage:"waveform.path.ecg")}.tag(BottomTab.acceleration)
                 }.frame(minHeight:165,idealHeight:195,maxHeight:230)
                 HStack(alignment:.top) {Text(model.status).lineLimit(2);Spacer();if model.index?.isPartialScan==true {Text("部分コピー／一部走査").foregroundStyle(.orange)}}.font(.caption).foregroundStyle(.secondary)
                 if !model.archiveNotice.isEmpty{Text(model.archiveNotice).font(.caption2).foregroundStyle(model.archiveNotice.contains("照合済み") ? Color.secondary:Color.orange)}
@@ -32,6 +33,7 @@ struct BrowserView: View {
                     exportMenu.disabled(model.recording==nil || model.busy || model.scanning)
                     Button(action:model.recoveryScan){Label("復旧走査",systemImage:"externaldrive.badge.magnifyingglass")}.disabled(model.scanning || model.busy || model.source==nil).help("高速索引にない孤立データを全領域から探します（時間がかかります）")
                     Button(action:model.openLogConversion){Label("ログ変換",systemImage:"map")}.disabled(model.source==nil || model.scanning || model.busy).help("履歴記録のGPSをGoogle Earth用のKMLファイルに変換します")
+                    Button{model.startAccelerationExtraction()}label:{Label("映像抽出",systemImage:"waveform.path.ecg")}.disabled(model.index==nil || model.scanning || model.busy).help("リストでチェックした連続録画から、加速度の動きが大きい場面を抽出します")
                     Button{model.showSettings=true}label:{Label("設定",systemImage:"slider.horizontal.3")}
                     Button{model.showRecordingSettings=true}label:{Label("記録設定",systemImage:"gearshape.2")}.help("カードのIMGから記録設定を読み出し、新しいコピーへ書き込みます")
                     Button{model.showCapabilities=true}label:{Label("対応状況",systemImage:"questionmark.circle")}
@@ -48,6 +50,7 @@ struct BrowserView: View {
         .sheet(isPresented:$model.showReport){RecordingReportView(model:model)}
         .sheet(isPresented:$model.showHistoryReport){HistoryReportView(model:model)}
         .sheet(isPresented:$model.showLogConversion){LogConversionView(model:model)}
+        .sheet(isPresented:$model.showAccelerationParameters){AccelerationParameterSheet(model:model,state:model.acceleration)}
     }
     private var sidebar:some View {
         VStack(alignment:.leading,spacing:0) {
