@@ -393,13 +393,18 @@ import PCBrowserCore
         }
         route=out
     }
+    /// How long showing a frame took (decode, picture conversion, projection) since the last reset. The GUI check reports it next to the
+    /// audio/video clock difference, so a slow machine can be told from a playback fault.
+    private(set) var renderCount=0,renderSecondsTotal=0.0,renderSecondsMax=0.0
+    func resetRenderStatistics(){renderCount=0;renderSecondsTotal=0;renderSecondsMax=0}
     func renderFrame(_ position:Int) async {
         guard let renderer,let r=recording,r.packets.indices.contains(position) else{return}
-        renderRequest+=1;let request=renderRequest,selection=selectionGeneration;rendering=true
+        renderRequest+=1;let request=renderRequest,selection=selectionGeneration,began=ProcessInfo.processInfo.systemUptime;rendering=true
         do {
             let raw=try await renderer.render(position),settings=projection
             let frame=try await displayPicture(raw,position:position,settings:settings,renderer:renderer)
             guard selectionGeneration==selection,request==renderRequest,!Task.isCancelled else{return}
+            let took=ProcessInfo.processInfo.systemUptime-began;renderCount+=1;renderSecondsTotal+=took;renderSecondsMax=max(renderSecondsMax,took)
             projectionTask?.cancel();rawGeneration=UUID();rawFrame=raw;displayedFrame=frame;image=NSImage(cgImage:frame,size:NSSize(width:frame.width,height:frame.height));videoNotice=nil;frameIndex=position;scrubber=Double(position)
             if settings != projection {reproject()}
         }catch let unavailable as VideoUnavailableError{
