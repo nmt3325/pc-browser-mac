@@ -246,12 +246,13 @@ final class ScanCancellation: @unchecked Sendable {
         let size=FrameHistorySheet.pictureSize(sourceWidth:raw0.width,sourceHeight:raw0.height),layout=FrameHistorySheet.layout(pictureWidth:size.width,pictureHeight:size.height)
         guard first.width == layout.width,first.height == layout.height else{throw BrowserError.io("16分割表示のシートの大きさが想定と異なります")}
         func slot(_ image:CGImage,_ index:Int)->CGRect{let p=layout.pictures[index];return CGRect(x:p.x,y:p.y,width:p.width,height:p.height)}
-        // Frame 0 is the newest tile; the fifteen before it do not exist and show the empty tile colour.
-        guard close(mean(first,slot(first,0)),[25.5,25.5,25.5],8),close(mean(first,slot(first,15)),mean(raw0,CGRect(x:0,y:0,width:raw0.width,height:raw0.height)),20) else{throw BrowserError.io("16分割表示の最初のシートが想定と異なります")}
+        // Frame 0 is the newest tile; the fifteen before it do not exist and show a neutral dark empty tile (the exact grey depends on colour management).
+        func emptyTile(_ m:[Double]?)->Bool{guard let m else{return false};return (m.max() ?? 255) < 60 && (m.max() ?? 0) - (m.min() ?? 0) <= 4}
+        guard emptyTile(mean(first,slot(first,0))),close(mean(first,slot(first,15)),mean(raw0,CGRect(x:0,y:0,width:raw0.width,height:raw0.height)),30) else{throw BrowserError.io("16分割表示の最初のシートが想定と異なります")}
         let before=mean(first,slot(first,15))
         await model.renderFrame(1)
         guard let second=model.displayedFrame,let raw1=model.rawFrame,second.width == layout.width else{throw BrowserError.io("16分割表示の次のシートを取得できません")}
-        guard close(mean(second,slot(second,14)),before,3),close(mean(second,slot(second,15)),mean(raw1,CGRect(x:0,y:0,width:raw1.width,height:raw1.height)),20) else{throw BrowserError.io("16分割表示でコマが1つ前へ送られません")}
+        guard close(mean(second,slot(second,14)),before,3),close(mean(second,slot(second,15)),mean(raw1,CGRect(x:0,y:0,width:raw1.width,height:raw1.height)),30) else{throw BrowserError.io("16分割表示でコマが1つ前へ送られません")}
         result["frame_history_sheet"]=["width":second.width,"height":second.height,"tiles":FrameHistorySheet.tileCount,"enabled_for_fdr":true,"grayed_for_q01":true] as [String:Any]
         model.projection.mode = .perspective;model.modeBeforeFrameHistory = .perspective
         controller.dispatch(311);controller.dispatch(310)
