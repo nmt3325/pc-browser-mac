@@ -213,6 +213,7 @@ def export(data, first_row=None, last_row=None):
     stats = [dict(n=0, first=None, last=None, speed_sum=0, speed_max=0, fix=False, meters=0.0, prev=None, shock=0, hits=0, others=[0, 0, 0])
              for _ in range(nrows)]
     prev_slot = 0                  # scan position of the previous emitted record (the first row starts from position 0)
+    kml_entries = []               # (GPS clock, fix byte, speed in mm/s, heading in 1e-5 degree, WGS84 position) of every entry
     last_g = None
     last_body = None
     prev_shown = None
@@ -241,7 +242,8 @@ def export(data, first_row=None, last_row=None):
             body = last_body + 1
         last_g = g
         last_body = body
-        speed = struct.unpack_from('<H', data, o + 0x36)[0] * 36 // 1000
+        speed_raw = struct.unpack_from('<H', data, o + 0x36)[0]
+        speed = speed_raw * 36 // 1000
         ax, ay, az = struct.unpack_from('<hhh', data, o + 0xAC)
         raw_lat = struct.unpack_from('<i', data, o + 0x2E)[0]
         raw_lon = struct.unpack_from('<i', data, o + 0x32)[0]
@@ -251,6 +253,7 @@ def export(data, first_row=None, last_row=None):
         trig = data[o + 0xA6]
         dev = bytes(data[o + 0x9A:o + 0x9A + 10])
         dev_text = dev.decode('ascii') if all(0x30 <= c <= 0x39 or 0x41 <= c <= 0x5A for c in dev) else ''
+        kml_entries.append((g, flag_byte, speed_raw, heading, pos))
         shown = g if g is not None else body
         if shown is None:
             # neither clock is usable: the record's own clock minus one second, else one second after the previous row entry
@@ -318,7 +321,8 @@ def export(data, first_row=None, last_row=None):
     first_start = stats[lo]['first']
     last_end = stats[hi]['last']
     name = '%s_%s_履歴記録レポート' % (compact_text(first_start), compact_text(last_end))
-    return {'summary': '\n'.join(summary) + '\n', 'data': '\n'.join(lines) + '\n', 'name': name, 'rows': nrows, 'stats': stats}
+    return {'summary': '\n'.join(summary) + '\n', 'data': '\n'.join(lines) + '\n', 'name': name, 'rows': nrows, 'stats': stats,
+            'kml_entries': kml_entries, 'first_clock': stats[0]['first']}
 
 
 def main(argv):

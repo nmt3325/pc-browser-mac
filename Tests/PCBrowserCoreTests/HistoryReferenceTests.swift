@@ -68,99 +68,13 @@ final class HistoryReferenceTests: XCTestCase {
 
     // MARK: random journals
 
-    /// A journal of 400 to 1198 slots written from a random slot: runs of samples whose clocks, fixes, positions and trigger
-    /// bits vary, split by gaps of empty slots, markers, unknown records and clock jumps. Half of them fill the whole ring.
-    private func randomJournal(seed: UInt64) -> Image {
-        var g = TestRandom(seed)
-        let ring = 400 + 2 * g.below(400)
-        let firstSlot = g.below(ring)
-        let target = g.chance(40) ? ring : ring / 2 + g.below(ring / 2)
-        let devices = ["YQB2000001", "yqa-18762 ", "          ", "ABC"]
-        var seq: [JournalRecord] = []
-        var clock = t0 + Int64(g.below(100_000))
-        var fix: UInt8 = 3
-        var lat: Int32 = 21_000_000, lon: Int32 = 83_400_000
-
-        func clocks() -> (a: Int64?, b: Int64?) {
-            var a: Int64? = clock, b: Int64? = clock
-            let pick = g.below(100)
-            if pick >= 70 && pick < 80 { a = clock - 1 }
-            else if pick >= 80 && pick < 85 { a = clock + 1 }
-            else if pick >= 85 && pick < 90 { a = clock - 61 }
-            else if pick >= 90 && pick < 95 { a = clock + Int64(g.below(601)) - 300 }
-            else if pick >= 95 { a = nil }
-            if g.chance(3) { b = nil }
-            return (a, b)
-        }
-        func slot(kind: Int) -> JournalRecord {
-            clock += 1
-            if g.chance(2) { clock += Int64(1 + g.below(5000)) } else if g.chance(1) { clock -= Int64(1 + g.below(300)) }
-            let (a, b) = clocks()
-            if g.chance(6) {
-                let pick = g.below(10)
-                fix = pick < 6 ? 3 : (pick < 8 ? 2 : (pick == 8 ? 0 : 1))
-            }
-            var r = JournalRecord(kind: kind, a: a, b: b, fix: fix)
-            r.speed = g.chance(3) ? 65535 : UInt16(g.below(3000))
-            if g.chance(2) {
-                r.lat = 0; r.lon = 0
-            } else {
-                if g.chance(2) {
-                    lat = Int32(20_000_000 + g.below(2_000_000)); lon = Int32(83_000_000 + g.below(3_000_000))
-                } else {
-                    lat += Int32(g.below(121) - 60); lon += Int32(g.below(121) - 60)
-                }
-                r.lat = lat; r.lon = lon
-            }
-            r.altitude = Int32(g.below(300_000) - 20_000)
-            r.heading = UInt32(g.below(36_000_000))
-            r.trigger = g.chance(8) ? UInt8(g.below(256)) : 0
-            var accel: [Int16] = []
-            for _ in 0..<3 { accel.append(g.chance(3) ? Int16(truncatingIfNeeded: g.below(65536) - 32768) : Int16(g.below(2001) - 1000)) }
-            r.accel = accel
-            if g.chance(5) { r.device = devices[g.below(devices.count)] }
-            return r
-        }
-        func blank() -> JournalRecord { clock += 1; return JournalRecord(kind: 0) }
-
-        while seq.count < target {
-            let length = g.chance(10) ? 100 + g.below(150) : 3 + g.below(60)
-            for _ in 0..<length { seq.append(slot(kind: 2)) }
-            let pick = g.below(100)
-            var gap: [JournalRecord] = []
-            if pick < 25 {
-                let n = 1 + g.below(3)
-                for _ in 0..<n { gap.append(g.chance(50) ? slot(kind: 1) : blank()) }
-            } else if pick < 55 {
-                let n = 4 + g.below(5)
-                for _ in 0..<n { gap.append(g.chance(50) ? slot(kind: 1) : blank()) }
-            } else if pick < 70 {
-                let n = 3 + g.below(4)
-                for _ in 0..<n { gap.append(slot(kind: 1)) }
-                if g.chance(40) { gap.insert(blank(), at: g.below(gap.count)) }
-            } else if pick < 80 {
-                let n = 2 + g.below(5)
-                for _ in 0..<n { gap.append(g.chance(50) ? slot(kind: 3) : (g.chance(50) ? slot(kind: 1) : blank())) }
-            } else if pick < 90 {
-                // no gap at all
-            } else {
-                let n = 1 + g.below(3)
-                for _ in 0..<n { gap.append(slot(kind: 2)) }
-            }
-            seq += gap
-            if g.chance(30) { clock += Int64(g.below(4000)) }
-        }
-        if seq.count > ring { seq.removeLast(seq.count - ring) }
-        return JournalImage.make(ring: ring, firstSlot: firstSlot, seq)
-    }
-
     func testRandomJournalsGiveByteIdenticalReportsToTheReference() throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("history-reference-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
         var compared = 0, selections = 0, rowTotal = 0, markerRows = 0
         for seed in 1...48 {
-            let image = randomJournal(seed: UInt64(seed))
+            let image = JournalImage.random(seed: UInt64(seed))
             guard let log = try JournalImage.log(image) else {
                 XCTAssertNil(try reference(image, rows: nil, in: folder), "seed \(seed): the reference found a journal, the app did not")
                 continue

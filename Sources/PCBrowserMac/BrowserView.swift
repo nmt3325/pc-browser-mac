@@ -31,6 +31,7 @@ struct BrowserView: View {
                     Button(action:model.chooseSD){Label("SDカード",systemImage:"sdcard")}.disabled(model.scanning || model.busy)
                     exportMenu.disabled(model.recording==nil || model.busy || model.scanning)
                     Button(action:model.recoveryScan){Label("復旧走査",systemImage:"externaldrive.badge.magnifyingglass")}.disabled(model.scanning || model.busy || model.source==nil).help("高速索引にない孤立データを全領域から探します（時間がかかります）")
+                    Button(action:model.openLogConversion){Label("ログ変換",systemImage:"map")}.disabled(model.source==nil || model.scanning || model.busy).help("履歴記録のGPSをGoogle Earth用のKMLファイルに変換します")
                     Button{model.showSettings=true}label:{Label("設定",systemImage:"slider.horizontal.3")}
                     Button{model.showRecordingSettings=true}label:{Label("記録設定",systemImage:"gearshape.2")}.help("カードのIMGから記録設定を読み出し、新しいコピーへ書き込みます")
                     Button{model.showCapabilities=true}label:{Label("対応状況",systemImage:"questionmark.circle")}
@@ -46,6 +47,7 @@ struct BrowserView: View {
         .onChange(of:columnVisibility){_,value in model.fileListVisible=(value != .detailOnly)}
         .sheet(isPresented:$model.showReport){RecordingReportView(model:model)}
         .sheet(isPresented:$model.showHistoryReport){HistoryReportView(model:model)}
+        .sheet(isPresented:$model.showLogConversion){LogConversionView(model:model)}
     }
     private var sidebar:some View {
         VStack(alignment:.leading,spacing:0) {
@@ -127,6 +129,7 @@ struct BrowserView: View {
                 HStack(spacing:8) {
                     Text(model.selectedJournalRows.isEmpty ? model.historyStatus:"\(model.selectedJournalRows.count)行選択 · "+model.historyStatus).font(.caption2).foregroundStyle(.secondary).lineLimit(2)
                     Spacer(minLength:4)
+                    Button("ログ変換"){model.openLogConversion()}.font(.caption).disabled(model.busy || model.scanning).help("履歴記録の全記録をGoogle Earth用のKMLファイルに変換します（選択行には関係しません）")
                     Button("レポート表示"){model.openHistoryReport()}.font(.caption).disabled(model.busy || model.scanning).help("選択した行（未選択なら全行）の履歴記録レポートを表示し、CSVを書き出します")
                 }.padding(.horizontal,10).padding(.vertical,4)
             }
