@@ -18,13 +18,18 @@ final class RecordingSettingsEditor: ObservableObject {
     @Published private(set) var generation: UInt32 = 0
     @Published private(set) var backupsMatch = true
     @Published private(set) var regionsStandard = true
+    /// The choice of the original's 「録画データ削除」 dialog (録画データ削除 / 記録設定データ初期化). Either one only writes a NEW image copy.
+    @Published var eraseOperation = RecordingDataOperation.deleteRecordings
+    /// What each operation would write to the opened image (nothing is written to compute it); empty when the image cannot be handled.
+    @Published private(set) var erasePlans: [RecordingDataOperation: RecordingDataPlan] = [:]
+    @Published private(set) var eraseProblem: String?
     private(set) var inputURL: URL?
     private var original = RecordingSettings()
     private var openedDate = Date()
     private var commandState: CardCommandState?
 
     func load(from url: URL?) {
-        loaded = false; problem = nil; commandsAvailable = false; inputURL = nil; commandState = nil
+        loaded = false; problem = nil; commandsAvailable = false; inputURL = nil; commandState = nil; erasePlans = [:]; eraseProblem = nil
         guard let url = url else {
             problem = "入力が開かれていません。カードのIMGファイルを開くと、その記録設定を読み出して新しいコピーへ書き込めます。"
             return
@@ -52,6 +57,12 @@ final class RecordingSettingsEditor: ObservableObject {
             generation = state.snapshot.generation
             backupsMatch = state.backupControlMatches && state.backupChannelMatches
             regionsStandard = state.snapshot.regionsAreStandard
+            var plans: [RecordingDataOperation: RecordingDataPlan] = [:]
+            for operation in RecordingDataOperation.allCases {
+                do { plans[operation] = try RecordingDataEraser.plan(source, operation: operation) } catch { eraseProblem = error.localizedDescription }
+            }
+            erasePlans = plans
+            if !plans.isEmpty { eraseProblem = nil }
             loaded = true
         } catch {
             problem = "このIMGの記録設定を読み出せません: " + error.localizedDescription
@@ -104,6 +115,37 @@ final class RecordingSettingsEditor: ObservableObject {
         angleDetection = commandState?.angleDetectionRequested ?? false
     }
     func setNow() { pickerDate = Date() }
+
+    /// What the chosen operation would do to the opened image, one line (generation step, regions that disappear, settings that change).
+    func erasePreview(_ operation: RecordingDataOperation) -> String? {
+        guard let plan = erasePlans[operation] else { return nil }
+        var text = plan.changes.joined(separator: "、")
+        if plan.loadedRegions.isEmpty {
+            text += "。一覧に表示されている録画区画はありません"
+        } else {
+            text += "。一覧から非表示になる区画: " + plan.loadedRegions.map(\.label).joined(separator: "・")
+        }
+        return text
+    }
+
+    /// 「録画データ削除」 as the original runs it: the first confirmation (OK／キャンセル), for 記録設定データ初期化 also the second one
+    /// (はい／いいえ), then the four management sectors are written. Here they are written into a NEW image copy; no recorded data is erased
+    /// (the original does not erase either: it raises the generation byte and the region counters, which hides the older recordings).
+    func erase(model: BrowserModel) {
+        guard let url = inputURL, erasePlans[eraseOperation] != nil else { return }
+        let operation = eraseOperation
+        guard PasswordPrompts.proceed(title: "記録設定", message: operation.confirmation) else { return }
+        if let warning = operation.settingsChangedWarning {
+            guard PasswordPrompts.confirm(title: "録画データ削除", message: warning) else { return }
+        }
+        guard let output = model.destination("PCBrowser-\(operation.rawValue)-copy", extension: "img") else { return }
+        model.performExport(operation.title + "コピーの作成") { flag, progress in
+            let summary = try RecordingDataEraser.writeCopy(of: url, to: output, operation: operation, cancelled: { flag.cancelled }, progress: progress)
+            let how = summary.usedClone ? "APFSクローン" : "全体コピー"
+            let note = operation.completion + "（新しいコピー: " + output.lastPathComponent + "・" + how + "・読み戻し検証済み。録画データ本体は消去せず、世代番号で非表示にしています）"
+            await MainActor.run { model.cardNotice = note }
+        }
+    }
 
     /// Like the original, closing with unsaved changes asks first (here: unsaved = not yet written to a new copy).
     func confirmDiscardIfNeeded() -> Bool {
@@ -256,6 +298,21 @@ struct RecordingSettingsView: View {
                 Text("書き込む値: " + editor.pickerText + "（CONFIG/TIME.INI）").font(.caption).foregroundStyle(.secondary).monospacedDigit()
                 Toggle("設置角度検出を実行", isOn: $editor.angleDetection).disabled(!editor.commandsAvailable)
                 SettingsHelp("原版が作るのと同じ内容の TIME.INI（[SET] と LOCALTIME）／空の SELFADJ.INI を新しいコピーの CONFIG に作成・削除します。実際のレコーダーがこれらをどう扱うかは、ここでは検証できていません。")
+            }
+            SettingsGroup("録画データ削除・初期化（新しいコピーへ）") {
+                Picker("操作", selection: $editor.eraseOperation) {
+                    ForEach(RecordingDataOperation.allCases, id: \.self) { operation in Text(operation.title).tag(operation) }
+                }.pickerStyle(.radioGroup).labelsHidden()
+                if let preview = editor.erasePreview(editor.eraseOperation) {
+                    Text("書き込む内容: " + preview).font(.caption).fixedSize(horizontal: false, vertical: true)
+                } else if let problem = editor.eraseProblem {
+                    SettingsHelp("このIMGでは実行できません: " + problem)
+                }
+                HStack {
+                    Button("実行…") { editor.erase(model: model) }.disabled(editor.erasePlans[editor.eraseOperation] == nil || model.busy)
+                    Spacer(minLength: 0)
+                }
+                SettingsHelp("原版の「録画データ削除」と同じ4つの管理セクター（管理・チャンネル設定とそれぞれのバックアップ）だけを、新しいIMGコピーに書き込みます。原版も録画データ本体は消さず、世代番号を上げて古い録画を一覧から外します。この版でも消去はせず、コピーの一覧からは非表示になり、復旧走査（--recovery-scan）では残りのデータを参照できます。「記録設定データ初期化」は録画設定を初期値に戻し、パスワードを解除します（SDカードIDは残ります）。元のIMG・SDカードには一切書き込みません。")
             }
             SettingsGroup("カードの状態") {
                 Text("管理領域の世代: \(editor.generation)").font(.caption).monospacedDigit()

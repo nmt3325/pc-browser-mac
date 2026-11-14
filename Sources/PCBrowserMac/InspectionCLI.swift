@@ -68,7 +68,7 @@ enum InspectionCLI {
                 "metadata_catalog":result.isMetadataCatalog,"catalog_seconds":catalogued-opened,"source_open_seconds":opened-began,"detail_load_seconds":detailed-catalogued,
                 "catalog_read_calls":result.catalogReadCalls,"catalog_boundary_parses":result.catalogBoundaryParses,"backlink_blocks":result.backlinkBlocks,"recovery_recommended":result.recoveryRecommended,
                 "loaded_recordings":result.recordings.filter(\.isLoaded).count,"partial_scan":result.isPartialScan,"rejected_candidates":result.rejectedCandidates,
-                "mode":"O_RDONLY","scanned_bytes":result.scannedBytes,"timing_note":"Card wall clock + nominal frame slots; no invented UTC; duplicate slot boundaries made monotonic."]
+                "hidden_regions":result.hiddenRegions.map{$0.text},"mode":"O_RDONLY","scanned_bytes":result.scannedBytes,"timing_note":"Card wall clock + nominal frame slots; no invented UTC; duplicate slot boundaries made monotonic."]
             report["first_catalog_row_seconds"] = firstRowSeconds ?? (catalogued-opened)
             if args.contains("--catalog-details") {
                 report["catalog_details"]=result.recordings.map { r in
@@ -306,7 +306,7 @@ enum InspectionCLI {
                 if let layout=result.layout {
                     lists["layout"]=["normal_end":layout.normalEnd,"event_start":layout.eventStart,"event_end":layout.eventEnd,"journal_first":layout.history?.lowerBound ?? 0,"journal_records":layout.historyRecordCount] as [String:Any]
                 }
-                if let area=result.layout?.history,let log=try HistoryLog.read(source:source,area:area) {
+                if let area=result.historyArea,let log=try HistoryLog.read(source:source,area:area) {
                     lists["journal"]=["rows":log.rows.count,"sample_records":log.sampleRecords,"marker_records":log.markerRecords,"empty_records":log.emptyRecords,"other_records":log.otherRecords,"newest_slot":log.newestSlot,
                         "table":log.rows.map{(r)->[Any] in [r.id+1,r.startText,r.durationText,r.kind.rawValue,r.records,r.deviceID ?? "—"]}] as [String:Any]
                 } else { lists["journal"]="unavailable" }
@@ -314,7 +314,7 @@ enum InspectionCLI {
             }
             if let dir=value("--legacy-history-report-dir",in:args) {
                 // 履歴記録レポート: the 集計 and データ CSV pair (code page 932) of the per-second journal, written into a new folder only.
-                guard let area=result.layout?.history,let log=try HistoryLog.read(source:source,area:area) else{throw BrowserError.invalid("この入力には読み取れる履歴記録がありません")}
+                guard let area=result.historyArea,let log=try HistoryLog.read(source:source,area:area) else{throw BrowserError.invalid("この入力には読み取れる履歴記録がありません")}
                 var selection=Set<Int>()
                 if let spec=value("--history-rows",in:args) {
                     let parts=spec.split(separator:"-").compactMap{Int($0)}
@@ -329,7 +329,7 @@ enum InspectionCLI {
             }
             if let dir=value("--legacy-history-kml-dir",in:args) {
                 // ログデータ変換: the Google Earth file of the whole per-second journal, written into a new folder only.
-                guard let area=result.layout?.history,let log=try HistoryLog.read(source:source,area:area),let kml=JournalKML(log:log) else{throw BrowserError.invalid("この入力には読み取れる履歴記録がありません")}
+                guard let area=result.historyArea,let log=try HistoryLog.read(source:source,area:area),let kml=JournalKML(log:log) else{throw BrowserError.invalid("この入力には読み取れる履歴記録がありません")}
                 var options=JournalKMLOptions()
                 options.showPoints = !args.contains("--journal-kml-no-points");options.showRoute = !args.contains("--journal-kml-no-route")
                 options.density=value("--journal-kml-density",in:args).flatMap(Int.init) ?? options.density
