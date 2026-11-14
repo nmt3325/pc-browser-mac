@@ -23,10 +23,17 @@ enum ReportFiles {
 
     /// Why the pair cannot be written into `folder` (shown to the user), or nil.
     static func refusal(_ report: LegacyReport, folder: URL, protecting sources: [URL]) -> String? {
+        refusal(names: [report.summaryFileName, report.dataFileName], folder: folder, protecting: sources)
+    }
+    /// The same check for the 履歴記録レポート pair.
+    static func refusal(history report: LegacyHistoryReport, folder: URL, protecting sources: [URL]) -> String? {
+        refusal(names: [report.summaryFileName, report.dataFileName], folder: folder, protecting: sources)
+    }
+    private static func refusal(names: [String], folder: URL, protecting sources: [URL]) -> String? {
         if case .refused(let reason) = WriteGuard.checkOutputFolder(folder, protecting: sources) { return reason }
         if isRemovableVolume(folder) { return "取り外し可能なメディア（SDカードなど）へは書き出しません。Macの内蔵ディスク上のフォルダーを選んでください" }
-        for target in targets(report, in: folder) where (try? FileManager.default.attributesOfItem(atPath: target.path)) != nil {
-            return "同名のファイルが既にあります: " + target.lastPathComponent + "（上書きしません。別のフォルダーを選んでください）"
+        for name in names where (try? FileManager.default.attributesOfItem(atPath: folder.appendingPathComponent(name).path)) != nil {
+            return "同名のファイルが既にあります: " + name + "（上書きしません。別のフォルダーを選んでください）"
         }
         return nil
     }
@@ -37,6 +44,25 @@ enum ReportFiles {
         if let reason = refusal(report, folder: folder, protecting: sources) { throw BrowserError.invalid(reason) }
         let summary = try LegacyReport.encodeCP932(report.summaryCSV())
         let data = try LegacyReport.encodeCP932(report.dataCSV())
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let urls = targets(report, in: folder)
+        try summary.write(to: urls[0], options: .withoutOverwriting)
+        do { try data.write(to: urls[1], options: .withoutOverwriting) }
+        catch { try? FileManager.default.removeItem(at: urls[0]); throw error }
+        return urls
+    }
+}
+
+extension ReportFiles {
+    static func targets(_ report: LegacyHistoryReport, in folder: URL) -> [URL] {
+        [report.summaryFileName, report.dataFileName].map { folder.appendingPathComponent($0) }
+    }
+    /// Writes the 履歴記録レポート pair (summary first, then the data lines). Nothing is left behind when the second file fails.
+    @discardableResult
+    static func writeCSV(history report: LegacyHistoryReport, to folder: URL, protecting sources: [URL], cancelled: () -> Bool = { false }) throws -> [URL] {
+        if let reason = refusal(history: report, folder: folder, protecting: sources) { throw BrowserError.invalid(reason) }
+        let summary = try report.summaryCSVData()
+        let data = try report.dataCSV(cancelled: cancelled)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let urls = targets(report, in: folder)
         try summary.write(to: urls[0], options: .withoutOverwriting)

@@ -142,6 +142,7 @@ import PCBrowserCore
         }
         if let kind = ViewCommands.kind(commandID: id), kind != .closeWindow { return model.image != nil }
         if (555...559).contains(id) { return model.image != nil }
+        if id == 377, model.listKind == .history { return model.historyLog != nil && !model.busy && !model.scanning }
         if Self.recordingCommands.contains(id) { return model.recording != nil && !model.busy && !model.scanning }
         switch id {
         case 307: return model.source != nil || model.index != nil
@@ -183,7 +184,7 @@ import PCBrowserCore
         case 373: model.exportStill()
         case 374: model.exportLog("csv")
         case 375: model.backup()
-        case 377: model.showReport = true
+        case 377: if model.listKind == .history { model.openHistoryReport() } else { model.showReport = true }
         case 390: showAbout()
         case 391, 392, 393: if let url = LegacyLinks.url(commandID: id) { NSWorkspace.shared.open(url) }
         case 400...455: if LegacyModelCatalog.model(commandID: id) != nil { model.legacyModelID = id } else { explain(id) }
