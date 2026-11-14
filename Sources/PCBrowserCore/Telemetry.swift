@@ -74,6 +74,10 @@ public struct PacketTelemetry: Sendable, Codable {
     public let gyroRaw: [Int16]
     public let inputRaw: [UInt8]
     public let eventRaw: UInt8
+    /// Trigger fields of the packet header: flags at 0x40 and the 24-bit cause mask at 0x4C…0x4E. Only the packet that
+    /// carries the trigger moment has them set; the original's report names the event on exactly that row.
+    public let triggerFlags: UInt8, triggerMask: UInt32
+    public var trigger: EventTrigger.Sample { .init(flags: triggerFlags, mask: triggerMask) }
     public var speedKMH: Double? { speedRaw < 100000 ? Double(speedRaw)*0.036 : nil }
     public func coordinate(datum: GPSDatum = .deviceTokyo) -> GeoCoordinate? {
         guard fixRaw != 0, satelliteCount > 0 else { return nil }
@@ -81,12 +85,15 @@ public struct PacketTelemetry: Sendable, Codable {
     }
     public static func parse(_ data: Data) throws -> PacketTelemetry {
         let b = Bytes(data), rawFPS = Int(try b.le16(0x1D)), fps = (1...120).contains(rawFPS) ? rawFPS:30
+        let maskLow = UInt32(try b.u8(0x4C)), maskMiddle = UInt32(try b.u8(0x4D)), maskHigh = UInt32(try b.u8(0x4E))
+        let mask = maskLow | (maskMiddle << 8) | (maskHigh << 16)
         return .init(clock:CardTimestamp.parse(data,offset:0xA,fps:fps), secondaryClock:CardTimestamp.parse(data,offset:0x12,hasSlot:false),
                      latitudeRaw:Int32(bitPattern:try b.le32(0x28)),longitudeRaw:Int32(bitPattern:try b.le32(0x2C)),altitudeRaw:Int16(bitPattern:try b.le16(0x30)),
                      speedRaw:try b.le32(0x32),satelliteCount:try b.u8(0x26),fixRaw:try b.u8(0x27),
                      accelerationRaw:try [0x46,0x48,0x4A].map { Int16(bitPattern:try b.le16($0)) },
                      gyroRaw:try [0x50,0x52,0x54].map { Int16(bitPattern:try b.le16($0)) },
-                     inputRaw:try [0x3A,0x3D,0x3E,0x3F,0x40,0x41].map { try b.u8($0) }, eventRaw:try b.u8(0x18))
+                     inputRaw:try [0x3A,0x3D,0x3E,0x3F,0x40,0x41].map { try b.u8($0) }, eventRaw:try b.u8(0x18),
+                     triggerFlags:try b.u8(0x40), triggerMask:mask)
     }
 }
 public struct RecordingTimeline: Sendable {
