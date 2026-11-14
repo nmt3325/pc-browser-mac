@@ -346,11 +346,72 @@ final class ScanCancellation: @unchecked Sendable {
         try captureOwnView(inventoryView,to:folder.appendingPathComponent("legacy-inventory.png"))
         model.showInventory=false;try await Task.sleep(nanoseconds:300_000_000)
         result["legacy_menu"]=["menu_bar_command_ids":required.count,"model_items":LegacyModelCatalog.all.count,"checked_state_roundtrip":true,"inventory_commands":LegacyMenuInventory.all.count,"inventory_view_captured":true] as [String:Any]
+        try await checkAccelerationExtraction(controller:controller,result:&result,folder:folder)
         if !CommandLine.arguments.contains("--ui-check-keep-open") {
             controller.dispatch(307)
             guard model.index == nil,model.source == nil,model.image == nil else{throw BrowserError.io("データフォルダを閉じるメニューが状態を破棄しません")}
             result["legacy_close_data"]=true
         }
+    }
+    /// 映像抽出 in the window: the menu item, the parameter dialog, a run over the first checked continuous recordings (the list
+    /// must equal an independent computation with the core), the result tab, and the jump to a scene.
+    private func checkAccelerationExtraction(controller:LegacyMenuController,result:inout [String:Any],folder:URL) async throws {
+        try await Task.sleep(nanoseconds:400_000_000) // the previous sheet is still closing
+        guard let item=controller.menuItem(tag:9040) else{throw BrowserError.io("映像抽出のメニューがありません")}
+        guard let index=model.index,let source=model.source else{throw BrowserError.io("映像抽出を試す入力がありません")}
+        let continuous=Array(index.continuousRecordings.prefix(3)),oldChecked=model.selectedExports
+        var info:[String:Any]=[:]
+        info["menu_item"]=true;info["continuous_recordings_tried"]=continuous.count
+        guard !continuous.isEmpty else{result["acceleration_extraction"]=info;return}
+        model.selectedExports=Set(continuous.map{$0.id})
+        guard controller.validateMenuItem(item) else{throw BrowserError.io("映像抽出のメニューが無効です")}
+        controller.dispatch(9040)
+        guard model.showAccelerationParameters else{throw BrowserError.io("映像抽出のパラメータ設定が開きません")}
+        for _ in 0..<30{if window?.attachedSheet != nil{break};try await Task.sleep(nanoseconds:100_000_000)}
+        try await Task.sleep(nanoseconds:500_000_000)
+        guard let sheetView=window?.attachedSheet?.contentView else{throw BrowserError.io("映像抽出のパラメータ設定のシートが表示されません")}
+        try captureOwnView(sheetView,to:folder.appendingPathComponent("acceleration-parameters.png"))
+        info["parameter_sheet_captured"]=true
+        model.showAccelerationParameters=false;try await Task.sleep(nanoseconds:400_000_000)
+        model.acceleration.count=100
+        model.runAccelerationExtraction()
+        var waited=0
+        while model.acceleration.running && waited<2400 {try await Task.sleep(nanoseconds:100_000_000);waited+=1}
+        guard !model.acceleration.running else{throw BrowserError.io("映像抽出が終わりません")}
+        guard model.bottomTab == .acceleration else{throw BrowserError.io("映像抽出のタブが選ばれません")}
+        var scenes:[AccelerationEntry]=[]
+        var lastID=""
+        var lastCount=0
+        for summary in continuous {
+            let loaded=try CatalogScanner.loadRecording(summary,source:source)
+            scenes+=AccelerationExtraction.entries(in:loaded)
+            lastID=loaded.id;lastCount=loaded.packets.count
+        }
+        let wanted=AccelerationExtraction.ranked(scenes,count:100)
+        let shown=model.acceleration.rows.map{$0.entry}
+        guard shown == wanted else{throw BrowserError.io("映像抽出の一覧が直接の計算と一致しません（\(shown.count)件・\(wanted.count)件）")}
+        guard model.acceleration.rows.enumerated().allSatisfy({$0.element.no == $0.offset+1}) else{throw BrowserError.io("映像抽出の一覧の番号が連番ではありません")}
+        info["scenes"]=scenes.count;info["listed_rows"]=shown.count;info["status"]=model.acceleration.status
+        if shown.isEmpty {
+            guard model.acceleration.status.hasPrefix("抽出できる場面がありませんでした") else{throw BrowserError.io("映像抽出の場面なしの表示が想定と異なります")}
+        }
+        if let content=window?.contentView{try captureOwnView(content,to:folder.appendingPathComponent("acceleration-result.png"))}
+        // Choosing a line shows the recording of the scene at the scene's first frame (a probe line, whatever the scenes are).
+        if lastCount>8 {
+            var probeFrame=5
+            if model.recording?.id == lastID,model.frameIndex == probeFrame {probeFrame=6}
+            let probe=AccelerationEntry(recordingID:lastID,firstFrame:probeFrame,frameCount:1,clock:nil,points:0)
+            model.showAccelerationEntry(probe)
+            var arrived=false
+            for _ in 0..<300 {
+                if model.recording?.id == lastID,model.frameIndex == probeFrame {arrived=true;break}
+                try await Task.sleep(nanoseconds:100_000_000)
+            }
+            guard arrived else{throw BrowserError.io("映像抽出の行を選んでもその場面へ移動しません")}
+            info["jump_to_scene_frame"]=probeFrame
+        }
+        model.selectedExports=oldChecked;model.acceleration.reset();model.bottomTab = .info
+        result["acceleration_extraction"]=info
     }
     @objc func openImage() { model.openPanel() }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }

@@ -2,8 +2,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 CONFIG=${CONFIG:-release}
-VERSION=${APP_VERSION:-0.2.0-beta.3}
-BUILD=${APP_BUILD:-16}
+VERSION=${APP_VERSION:-0.2.0-beta.4}
+BUILD=${APP_BUILD:-17}
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$ ]]
 [[ "$BUILD" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]
 SHORT_VERSION=${VERSION%%-*}
