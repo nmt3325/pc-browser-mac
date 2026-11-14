@@ -324,8 +324,18 @@ final class ScanCancellation: @unchecked Sendable {
         let oldMuted=model.muted;controller.dispatch(362)
         guard model.muted != oldMuted,checked(362) == model.muted else{throw BrowserError.io("ミュートメニューが反映されません")}
         controller.dispatch(362);guard model.muted == oldMuted else{throw BrowserError.io("ミュートメニューが元に戻りません")}
-        let before=model.frameIndex;controller.dispatch(352);try await Task.sleep(nanoseconds:700_000_000)
-        guard model.frameIndex>before || model.recording.map({before>=$0.packets.count-1}) == true else{throw BrowserError.io("次コマメニューが反映されません")}
+        // The step decodes and projects a picture; a loaded runner can need longer than one fixed 700 ms sleep (run 155 failed on that), so poll for the new position for up to 10 s. The condition itself is unchanged.
+        let before=model.frameIndex,stepBegan=ProcessInfo.processInfo.systemUptime
+        let lastFrame=(model.recording?.packets.count ?? 0)-1,haveRecording=model.recording != nil
+        controller.dispatch(352)
+        var stepped=false
+        for _ in 0..<100 {
+            try await Task.sleep(nanoseconds:100_000_000)
+            if model.frameIndex>before {stepped=true;break}
+            if haveRecording && before>=lastFrame {stepped=true;break}
+        }
+        guard stepped else{throw BrowserError.io("次コマメニューが反映されません")}
+        result["legacy_next_frame_wait_ms"]=Int(((ProcessInfo.processInfo.systemUptime-stepBegan)*1000).rounded())
         controller.dispatch(354);try await Task.sleep(nanoseconds:700_000_000)
         controller.dispatch(356)
         model.speedUnit=oldUnit;model.sensorScale=oldScale;model.showMap=oldMap;model.legacyModelID=oldModel;model.projection.mode=oldMode;model.fileListVisible=oldVisible
