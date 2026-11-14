@@ -171,8 +171,8 @@ import PCBrowserCore
         case 350...356: model.performPlayback(commandID: id)
         case 570...576: model.performPlayback(commandID: id - 220)
         case 555...559: if let mode = ViewCommands.displayMode(commandID: id) { model.projection.mode = mode }
-        case 360: model.volume = max(0, model.volume - 0.1)
-        case 361: model.volume = min(1, model.volume + 0.1)
+        case 360: model.volume = PlaybackVolume.fraction(level: PlaybackVolume.down(PlaybackVolume.level(fraction: model.volume)))
+        case 361: model.volume = PlaybackVolume.fraction(level: PlaybackVolume.up(PlaybackVolume.level(fraction: model.volume)))
         case 362: model.muted.toggle()
         case 380: model.speedUnit = .kilometersPerHour
         case 384: model.speedUnit = .knots

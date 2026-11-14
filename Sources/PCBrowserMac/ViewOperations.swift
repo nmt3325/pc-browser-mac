@@ -30,16 +30,21 @@ extension BrowserModel {
 
     /// Plays one of the original menu playback commands (350–356; the detached window repeats them as 570–576).
     func performPlayback(commandID id: Int) {
+        let command: PlaybackTransport.Command
         switch id {
-        case 350: play(rate: 1, backwards: false)
-        case 351: play(rate: 4, backwards: false)
-        case 352: step(1)
-        case 353: play(rate: 1, backwards: true)
-        case 354: step(-1)
-        case 355: play(rate: 4, backwards: true)
-        case 356: pause()
-        default: break
+        case 350: command = .play
+        case 351: command = .fastForward
+        case 352: step(1); return
+        case 353: command = .reversePlay
+        case 354: step(-1); return
+        case 355: command = .rewind
+        case 356: pause(); return
+        default: return
         }
+        // The original's state machine: 再生 x1 → x0.5, 早送り／早戻し x2 → x4 → x8 → x16, 逆再生 x1 → x0.5 (PlaybackTransport).
+        let current = playing ? PlaybackTransport.State(rate: playbackRate, backwards: reverse) : PlaybackTransport.State.stopped
+        let next = PlaybackTransport.next(after: current, command: command, hasAudio: hasAudioTrack)
+        if next.isStopped { pause() } else { play(rate: next.rate, backwards: next.backwards) }
     }
 
     func setViewMouseMode(_ mode: ViewMouseMode) { viewMouseMode = viewMouseMode == mode ? .standard : mode }

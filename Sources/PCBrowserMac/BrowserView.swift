@@ -170,9 +170,9 @@ struct BrowserView: View {
                 Spacer(minLength:4)
                 Button{model.muted.toggle()}label:{Image(systemName:model.muted ? "speaker.slash.fill":"speaker.wave.2.fill")}.buttonStyle(.borderless)
                 Slider(value:$model.volume,in:0...1).frame(width:65).accessibilityLabel("音量")
-                Picker("速度",selection:$model.playbackRate){ForEach([0.5,1,1.5,2,4],id:\.self){Text(String(format:"%g×",$0)).tag($0)}}.labelsHidden().frame(width:80)
+                Picker("速度",selection:$model.playbackRate){ForEach([0.5,1,1.5,2,4,8,16],id:\.self){Text(String(format:"%g×",$0)).tag($0)}}.labelsHidden().frame(width:80)
             }
-            HStack{Text(model.audioStatus).lineLimit(1);Spacer();if model.reverse || model.playbackRate>2{Text("逆再生・4倍速は消音")};if abs(model.audioDrift)>0.15{Text(String(format:"音声長差 %.2f秒",model.audioDrift)).foregroundStyle(.orange)}}.font(.caption2).foregroundStyle(.secondary)
+            HStack{Text(model.audioStatus).lineLimit(1);Spacer();if model.reverse || model.playbackRate>2{Text("逆再生・2倍速超は消音")};if abs(model.audioDrift)>0.15{Text(String(format:"音声長差 %.2f秒",model.audioDrift)).foregroundStyle(.orange)}}.font(.caption2).foregroundStyle(.secondary)
         }.disabled(model.recording==nil || model.busy)
     }
     private var metadata:some View {
