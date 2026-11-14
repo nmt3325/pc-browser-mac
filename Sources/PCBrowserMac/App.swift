@@ -58,13 +58,14 @@ final class ScanCancellation: @unchecked Sendable {
             guard model.frameIndex == 20 else { throw BrowserError.io("シーク位置が一致しません") }
             result["seek_to_frame_20"] = true
             for _ in 0..<100 {if model.audioDuration>0{break};try await Task.sleep(nanoseconds:50_000_000)}
-            model.resetRenderStatistics();model.togglePlay(backwards:false)
+            await model.resetRenderStatistics();model.togglePlay(backwards:false)
             try await Task.sleep(nanoseconds:2_000_000_000)
             let videoTime=model.currentSeconds,audioTime=model.activeAudioClockSeconds
             result["audio_clock_active_during_playback"]=audioTime != nil
             if let audioTime {result["av_clock_difference_seconds"]=videoTime-audioTime}
             model.pause()
             result["playback_shown_frames"]=model.renderCount;result["playback_show_mean_ms"]=model.renderCount>0 ? model.renderSecondsTotal/Double(model.renderCount)*1000:0.0;result["playback_show_max_ms"]=model.renderSecondsMax*1000
+            for (key,value) in await model.renderTiming() {result[key]=value}
             result["playback_advanced"] = model.frameIndex > 20
             result["playback_advanced_to_frame"] = model.frameIndex
             guard model.frameIndex >= 50 else { throw BrowserError.io("実時間再生で十分に位置が進みませんでした") }

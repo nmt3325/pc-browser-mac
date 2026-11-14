@@ -98,6 +98,11 @@ actor FrameRenderer {
     /// The frame `cached` is the picture of. It can be older than `last` after frames were decoded without making pictures.
     private var cachedIndex = -1
     private static let cachedFrames = 12
+    /// Where the time of showing frames goes (decoding in the video decoder, converting the decoded frame to a picture). The GUI check
+    /// reports the means, so a slow machine can be told from a slow step.
+    struct Timing: Sendable { var decodeSeconds = 0.0, decodedFrames = 0, convertSeconds = 0.0, convertedFrames = 0 }
+    private(set) var timing = Timing()
+    func resetTiming() { timing = Timing() }
     // Reverse/step-back must not construct a new VT/CI session for every
     // previously displayed frame. Bound decoded memory independently of the
     // recording length (a 2560x1080 BGRA frame costs about 10.5 MiB).
@@ -126,12 +131,16 @@ actor FrameRenderer {
         for i in plan.decodeFrom...index {
             let p = packets[i]
             let data = try source.read(at: p.payloadOffset, count: p.videoBytes)
+            let began = ProcessInfo.processInfo.systemUptime
+            let buffer = try decoder!.decodeBuffer(data, ordinal: i, fps: fps)
+            let decoded = ProcessInfo.processInfo.systemUptime
+            timing.decodeSeconds += decoded - began; timing.decodedFrames += 1
             if i < plan.convertFrom {
-                _ = try decoder!.decodeBuffer(data, ordinal: i, fps: fps)
                 last = i
                 continue
             }
-            let image = try decoder!.decode(data, ordinal: i, fps: fps)
+            let image = try decoder!.picture(of: buffer)
+            timing.convertSeconds += ProcessInfo.processInfo.systemUptime - decoded; timing.convertedFrames += 1
             result = image; last = i; cached = image; cachedIndex = i
             let cost = image.bytesPerRow.multipliedReportingOverflow(by: image.height)
             if !cost.overflow { recentFrames.insert(image, at: i, bytes: cost.partialValue) }
