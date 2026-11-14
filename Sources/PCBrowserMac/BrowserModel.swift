@@ -50,6 +50,8 @@ import PCBrowserCore
     @Published var rawQuery = RawSensorQuery() { didSet { if oldValue != rawQuery { resetRawSearch() } } }
     @Published var rawQueryResults: [String: Bool] = [:]
     @Published var showReport = false
+    /// Trigger types chosen in トリガ種類選択; nil shows every trigger of the recording.
+    @Published var triggerTypeSelection:Set<String>?
     @Published var selectedExports=Set<String>()
     @Published var bookmarks=Set<String>()
     @Published var inFrame=0
@@ -249,6 +251,8 @@ import PCBrowserCore
                     }}.value
                 }
                 guard generation==token else{return};index=result;scanning=false;progress=1;catalogSeconds=ProcessInfo.processInfo.systemUptime-began
+                // Like the original, take the model from the card itself (control sector byte 0x1DC).
+                if let detected=DeviceModelTable.identify(from:source,control:result.control),let entry=DeviceModelTable.menuModel(for:detected),legacyModelID != entry.commandID{legacyModelID=entry.commandID}
                 if firstListSeconds==0,!result.recordings.isEmpty{firstListSeconds=catalogSeconds}
                 status=catalogStatus(result)+String(format:" · 一覧 %.2f秒",catalogSeconds)
                 if result.recoveryRecommended{status+=" / 孤立データは復旧走査"}
@@ -303,7 +307,7 @@ import PCBrowserCore
     }
     private func prepareSelection() {
         pause();audioTask?.cancel();selectionCancellation.cancel();selectionGeneration=UUID();let token=selectionGeneration,flag=ScanCancellation();selectionCancellation=flag
-        image=nil;displayedFrame=nil;rawFrame=nil;audioPlayer=nil;audioClip=nil;audioStatus="音声を読み取っています…";audioDuration=0;audioDrift=0;frameIndex=0;scrubber=0;rendering=false;selectionLoading=false;renderer=nil;timeline=RecordingTimeline(packets:[]);route=[];sensors=[]
+        triggerTypeSelection=nil;image=nil;displayedFrame=nil;rawFrame=nil;audioPlayer=nil;audioClip=nil;audioStatus="音声を読み取っています…";audioDuration=0;audioDrift=0;frameIndex=0;scrubber=0;rendering=false;selectionLoading=false;renderer=nil;timeline=RecordingTimeline(packets:[]);route=[];sensors=[]
         guard let summary=selectedSummary,let source,!scanning else{return}
         if summary.isLoaded {installSelection(summary,source:source,token:token,flag:flag);return}
         selectionLoading=true;let began=ProcessInfo.processInfo.systemUptime
@@ -361,6 +365,8 @@ import PCBrowserCore
         }
     }
     func seek(){pause();let position=Int(scrubber.rounded());Task{await renderFrame(position)}}
+    /// Jumps to a frame of the loaded recording (a line of the trigger list).
+    func seekToFrame(_ index:Int){guard let r=recording,r.packets.indices.contains(index) else{return};scrubber=Double(index);seek()}
     func step(_ delta:Int){pause();guard let r=recording,!r.packets.isEmpty else{return};let target=max(0,min(r.packets.count-1,frameIndex+delta));Task{await renderFrame(target)}}
     func pause(){playGeneration=UUID();playing=false;playTask?.cancel();playTask=nil;audioPlayer?.pause();renderRequest+=1;rendering=false}
     func togglePlay(backwards:Bool?=nil) {

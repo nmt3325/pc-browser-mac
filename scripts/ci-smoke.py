@@ -196,10 +196,12 @@ def media_smoke(binary, root, strict, gui_strict=False, evidence=None):
         assert (folder / 'print.pdf').read_bytes()[:5] == b'%PDF-'
         recording_report = folder / 'recording.json'
         run_cli(binary, *common, '--recording-report-pdf', folder / 'recording.pdf', '--report', recording_report)
-        assert load_json(recording_report)['report_reference_frames'] == [0, 60, 119]
+        page = load_json(recording_report)
+        # A continuous report has no reference images (only event reports carry the five pictures).
+        assert page['report_reference_frames'] == [] and page['report_page']['kind'] == 'continuous' and page['report_page']['pages'] == 1, page
         assert (folder / 'recording.pdf').read_bytes()[:5] == b'%PDF-'
         return {'projection_pngs': 9, 'wav_bytes': 32044, 'movie': movie['movie_export'], 'avi': avi,
-                'print_pages': sheet['print_pdf']['pages'], 'sequence_frames': 9, 'report_pdf_reference_frames': [0, 60, 119]}
+                'print_pages': sheet['print_pdf']['pages'], 'sequence_frames': 9, 'report_pdf_pages': 1}
 
     def gui_check():
         """Open the real window on the generated image and run the GUI self-check (playback, audio clock, map, projections, view operations)."""
@@ -217,7 +219,8 @@ def media_smoke(binary, root, strict, gui_strict=False, evidence=None):
             assert data['route_points'] == 120 and data['raw_sensor_points'] == 720 and data['reverse_playback_decreased'] is True, data
             assert data['continuously_played_boundaries'] == [40, 80] and data['audio_prepared'] is True, data
             assert len(data['projection_modes']) == 9 and all(data['projection_modes'].values()), data
-            for name in ('main.png', 'view-ops-flip-rotate.png', 'detached-view.png'):
+            assert sorted(data['legacy_report_pages']) == ['continuous', 'event'], data.get('legacy_report_pages')
+            for name in ('main.png', 'view-ops-flip-rotate.png', 'detached-view.png', 'recording-report.png', 'report-page-event.png', 'report-page-continuous.png'):
                 assert (folder / name).stat().st_size > 5000, name
         finally:
             if evidence:
