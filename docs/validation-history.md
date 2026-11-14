@@ -71,6 +71,16 @@ Everything below was compared on the Linux machine that runs the original (Wine)
 
 Lesson recorded from run #109: the GUI check failed because a test assumed the first row of the made-up journal starts at its first record; the original's lagging-clock rule starts it one second earlier, so the expected default file name was corrected (evidence: the reference model and the original's rule; no check was weakened).
 
+## Password and delete / initialise oracle (after run 111)
+
+The same hook-and-Wine method was used on a scratch copy of the sample card's image (writes swallowed and logged). Aggregate findings:
+
+- **Password**: the original asks for the password when it loads a card that has one and refuses to load it on a wrong or cancelled entry; the control sector stores a flag byte and the word `3 × password + 1639`; the dialog's checks and message texts were taken verbatim (`settings-format.md`). Q-01 class only.
+- **録画データ削除**: the original writes exactly four sectors (management sector, channel settings sector and the backups of both) and nothing else. The management sector gets a new card generation (old + 1), and each region counter becomes the newest ring generation it had loaded plus one (a region it had not loaded: the new generation). The recorded data is **not** overwritten; readers skip what is not newer than the counter.
+- **記録設定データ初期化**: the same four sectors; as 削除, plus the dialog defaults, password cleared, first multi-battery byte reset (second left alone), region table back to the standard 24-hour layout, card ID untouched. A second confirmation (はい／いいえ) appears before it runs.
+- **Reader rule**: with the card at generation 1 the original lists a region only while its head header carries the card generation and the head's generation is above the region counter. At generation 2 and above the original listed nothing in the same experiments, which does not fit that rule; this is **not explained** (`recording-data-operations.md`, `validation-gaps.md`). The Mac port hides a region only when both conditions prove it stale.
+- The Mac writers are tested in CI against byte-exact expectations on synthetic cards (`RecordingGenerationTests`, `scripts/settings_smoke.py` section 9); nothing was written to a real card.
+
 ## What was *not* established by these runs
 
 See `validation-gaps.md`. In particular nothing here is a physical-SD, physical-camera or Intel-hardware result.

@@ -135,6 +135,11 @@ public struct ImageIndex: Sendable {
     public var backlinkBlocks = 0
     /// Region table of the control sector, when it is consistent with the disk size.
     public var layout: DiskLayout?
+    /// Regions the original does not list because a 削除／初期化 happened after their data was written (`RecordingGeneration`).
+    /// The data is still on the card; the recovery scan lists it. Empty when the card has no checksummed generation information.
+    public var hiddenRegions: [HiddenRegion] = []
+    /// The journal area to read: nil when the journal is absent or hidden by the generation rule.
+    public var historyArea: Range<UInt64>? { hiddenRegions.contains { $0.kind == .history } ? nil : layout?.history }
     public var frameCount: Int { recordings.reduce(0) { $0+$1.frameCount } }
     public var validatedFrameCount: Int { recordings.reduce(0) { $0+$1.packets.count } }
     public var blockCount: Int { recordings.reduce(0) { $0+$1.blockCount } }
