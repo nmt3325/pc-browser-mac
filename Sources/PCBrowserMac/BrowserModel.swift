@@ -260,7 +260,16 @@ import PCBrowserCore
         if result.isPartialScan {text+=" / 部分コピー・一部走査"}
         return text
     }
+    /// Like the original (dialog 106), a card that carries a password is loaded only after the password was typed correctly;
+    /// a wrong or cancelled entry leaves the card unloaded.
+    private func passwordAccepted(for source:any ByteSource)->Bool {
+        guard let stored=CardPassword.required(in:source) else{return true}
+        guard let typed=PasswordPrompts.ask(message:CardPassword.Message.prompt) else{return false}
+        guard CardPassword.unlocks(typed,stored:stored) else{PasswordPrompts.showError(CardPassword.Message.wrong);return false}
+        return true
+    }
     private func load(_ source:any ByteSource,name:String,limit:UInt64?=nil,recovery:Bool=false) {
+        if !recovery,!passwordAccepted(for:source) {closeData();status="パスワードが確認できなかったため、カードを読み込みませんでした";return}
         cancel();generation=UUID();let token=generation,flag=ScanCancellation(),began=ProcessInfo.processInfo.systemUptime;cancellation=flag
         self.source=source;scanLimit=limit;index=nil;selectedID=nil;image=nil;sourceName=name;progress=0;scanning=true;busy=false;errorMessage=nil;selectedExports=[];cardFiles=[];rawQueryResults=[:]
         eventEntries=[];historyLog=nil;selectedJournalRows=[];historyStatus="";historyLoading=false;pendingLogConversion=false;showLogConversion=false;listKind = .continuous
