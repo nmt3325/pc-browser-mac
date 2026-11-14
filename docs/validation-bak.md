@@ -35,6 +35,10 @@ machines; they are not in Git or CI.
 SHA-256 prefixes of the genuine parts (identical to the Mac output): 9c3ecb1c, 8491e2f2, 75b9d6cf, 22887112, 9c61d10b,
 0fb0c905, e1b959c3, bcb25bf9, ea5e9694, 84f9a5e2, eb7f654f, d338846d, d88c6d36.
 
+## Repeated on a Mac with the run #128 artifact
+
+The same six selections were written on a Mac by the signed run #128 artifact from the image of the sample card; all 13 parts are identical to the genuine Windows parts in file name and SHA-256 (the part sizes and hashes are those of the table above, which was made on Linux with run 60). Re-reading the result with the original application was not repeated.
+
 ## What the comparison found and fixed (history)
 
 * Run 58 (192 tests): all 13 parts identical in **content**, but the name counter differed in 4 sets. The Mac used the serial of

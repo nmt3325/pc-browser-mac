@@ -2,7 +2,9 @@
 
 This page separates what the Mac port has been shown to do (see `validation-history.md`, `validation-full-port.md`, `validation-bak.md`, `history-report.md`, `kml-export.md`) from what has **not** been verified. Nothing on this page may be read as "works"; each row names the missing evidence. A row leaves this page only when the evidence exists and is linked from the validation documents.
 
-Latest CI: run #126, 378 tests, 0 failures, signed app, extracted-package check, GUI check and settings smoke (including delete / initialise on copies) passed. Only build 13 (run #82) was run on a real Mac with real data; builds after it have **not** been run on a Mac (the verification Macs were unreachable), so everything the later builds added is verified by CI (synthetic data, differential tests against independent reference scripts) and by comparisons made on the Linux machine that runs the original application, not on a Mac.
+**CI availability:** the 16分割表示 change (commit `7d0e57d0`) has not been built or tested yet. Run #130 and a manual diagnostic workflow (`ubuntu-latest`, `macos-15`, `macos-14`, `macos-latest`) all failed within two seconds with no runner assigned, which points at the account's Actions minutes or billing rather than at the code; the log of such a job is not retrievable. The last CI-verified code is commit `da3bfda2` (run #129).
+
+Latest verified CI before that: run #126, 378 tests, 0 failures, signed app, extracted-package check, GUI check and settings smoke (including delete / initialise on copies) passed. Build 13 (run #82) and the build-14 artifact of run #128 were run on a real Mac with real data (build 14: lists, history report CSVs, KML, BAK writer and delete/initialise on clones of the sample card image; `validation-full-port.md`). The decode/export paths of build 14 (MP4, AVI, print, report PDF), AVI beyond 4 GiB and the packaged GUI check on real media have **not** been run on a Mac, and the newest builds have not been started there at all, so everything else the later builds added is verified by CI (synthetic data, differential tests against independent reference scripts) and by comparisons made on the Linux machine that runs the original application, not on a Mac.
 
 ## Hardware and media
 
@@ -14,7 +16,7 @@ Latest CI: run #126, 378 tests, 0 failures, signed app, extracted-package check,
 | Other models than the sample card's model (Q-01) | partly analysed | the model table (37 models, 6 dialog classes) is known; settings storage and dialog controls were observed on the Q-01 class only; the other five classes expose more (or other) controls |
 | Cards from other firmware versions, damaged cards, wrapped circular recordings | not tested | only the sample card and partial backups of it were available |
 | Intel Mac GUI, macOS 14 execution | not tested | unit tests ran on an Intel CI runner (compatibility build, build 10, 126 tests); the GUI has not been exercised on Intel hardware or macOS 14 |
-| Mac run of the latest builds | **not done** | no Mac was reachable after build 13; the run #126 artifact has not been started on a Mac and its list/report/KML output has not been compared on a Mac with the original's files |
+| Mac run of the latest builds | **partly done** | the run #128 artifact (build 14) was verified on a Mac: signature, lists, history report CSVs, KML, BAK writer, delete/initialise on clones. Not done: decoding and exports (MP4/AVI/print/report PDF), AVI beyond 4 GiB, destination-full behaviour, the packaged GUI check on real media, and any build newer than #128/#129 |
 
 ## Original-application equivalence
 
