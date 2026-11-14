@@ -30,6 +30,16 @@ Actionsのソースcommit、テスト数・失敗数、OS／Swift、ZIPのSHA-25
 
 初回の実行（run 1、commit `b5e2b899f1beba68d7656cc9cacab4328924d2d4`）では、`macos-14`ジョブは工程の前にキャンセルされ（ログなし、理由未確認、ランナー提供終了の可能性）、`macos-15-intel`ジョブは単体テスト126件・ビルド・署名・展開後検証・CLI合成スモークまで成功した。macOS 14上の実行は未確認のまま。
 
+## 公開済み成果物の確認（手動・任意）
+
+[Verify a published release (manual)](https://github.com/nmt3325/pc-browser-mac/actions/workflows/verify-release.yml)は`workflow_dispatch`専用で、入力`tag`（例：`v0.2.0-beta.3`）のreleaseから**公開済みのアセットをそのままダウンロード**する。ビルドはしない。`SHA256SUMS`の全ファイル照合、署名、実行ファイルのarm64、最小対象OSを確認し、展開した.appで`scripts/ci-smoke.py`（CLI合成スモークと、`PCB_REQUIRE_GUI_CHECK=1`によるGUI自己検査）を`macos-14`と`macos-15`（どちらもarm64）で実行する。結果は`verify-release-<runner>-<run番号>` artifactの`verify-release.json`とGUI検査の証拠に保存する。
+
+これは利用者が入手するファイルそのものの検査だが、GitHub-hostedの仮想マシン上の合成データによる確認であり、macOS 14の実機、Intel実機、実カード、実SDの代わりにはならない。
+
+## GUI自己検査の再生時間
+
+GUI自己検査は、再生中の映像が音声クロックから0.35秒以内に付いていることを確認する（しきい値は変えない）。この確認は実行マシンの速さに左右されるため、レポートには再生中に表示したコマ数と1コマの表示時間（平均・最大、ミリ秒。`playback_shown_frames`・`playback_show_mean_ms`・`playback_show_max_ms`）も残す。遅いランナーで不合格になったときに、再生の不具合かマシンの遅さかを区別するための記録である。
+
 ## このCIで検査しないもの
 
 実カード、私的映像、GPS実座標、機密設定はアップロードしない。GUI操作、音声の実再生、Metal各表示、MapKit、実SDの管理者認証、メーカー光学校正、全カード映像のデコード、長時間AV同期をこのCIで通過したとは表示しない。それらの過去の確認範囲は[検証記録](validation-catalog.md)に記載する。
