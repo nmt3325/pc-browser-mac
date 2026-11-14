@@ -174,7 +174,7 @@ import PCBrowserCore
         if historyLog != nil {showLogConversion=true;return}
         guard source != nil,let index else{errorMessage="ログデータ変換にはSDカードまたはIMGを開く必要があります";return}
         guard !scanning else{errorMessage="索引の作成が終わってからログデータ変換を開始してください";return}
-        guard index.layout?.history != nil else {
+        guard index.historyArea != nil else {
             if selectedRecordings.isEmpty {errorMessage="この入力には履歴記録の記録領域がありません。録画を選ぶと、その録画のGPSをKMLに書き出します"} else {exportLog("kml")}
             return
         }
@@ -186,7 +186,7 @@ import PCBrowserCore
     /// The per-second journal behind the event region is read only when its tab is opened (about 150 MB on a full card).
     func loadHistoryIfNeeded() {
         guard historyLog==nil,!historyLoading,!scanning,let source,let index else{return}
-        guard let area=index.layout?.history else{historyStatus="この入力には履歴記録の記録領域がありません（部分コピー・BAK・領域表が不明な入力）";return}
+        guard let area=index.historyArea else{historyStatus="この入力には履歴記録の記録領域がありません（部分コピー・BAK・領域表が不明な入力）";return}
         historyLoading=true;historyStatus="履歴記録を読み取っています…";let token=generation
         Task {
             do {
@@ -258,6 +258,7 @@ import PCBrowserCore
         text+=" · \(result.blockCount)保存ブロック · \(result.frameCount)フレーム"
         text+=result.isMetadataCatalog ? "（索引概数）":"（照合済み）"
         if result.isPartialScan {text+=" / 部分コピー・一部走査"}
+        if !result.hiddenRegions.isEmpty {text+=" / 削除・初期化済みのため非表示: "+result.hiddenRegions.map{$0.kind.label}.joined(separator:"・")+"（復旧走査で残存データを参照可）"}
         return text
     }
     /// Like the original (dialog 106), a card that carries a password is loaded only after the password was typed correctly;
@@ -294,7 +295,10 @@ import PCBrowserCore
                 if firstListSeconds==0,!result.recordings.isEmpty{firstListSeconds=catalogSeconds}
                 status=catalogStatus(result)+String(format:" · 一覧 %.2f秒",catalogSeconds)
                 if result.recoveryRecommended{status+=" / 孤立データは復旧走査"}
-                if result.frameCount==0{status="高速索引に対応する録画がありません。必要なら復旧走査を実行してください"}
+                if result.frameCount==0{
+                    status="高速索引に対応する録画がありません。必要なら復旧走査を実行してください"
+                    if !result.hiddenRegions.isEmpty {status="録画データは削除・初期化済みです（"+result.hiddenRegions.map{$0.text}.joined(separator:"、")+"）。データ自体は消えていないため、復旧走査で参照できます"}
+                }
                 var migrated=bookmarks
                 for r in result.recordings where r.blocks.contains(where:{bookmarks.contains("\($0.recordSector)-\($0.channel)")}) {migrated.insert(r.id)}
                 if migrated != bookmarks {bookmarks=migrated;UserDefaults.standard.set(Array(migrated),forKey:bookmarkKey)}

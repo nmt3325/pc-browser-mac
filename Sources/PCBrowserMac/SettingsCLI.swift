@@ -10,6 +10,9 @@ import PCBrowserCore
 /// `--password-check <image> [--card-password <text>]` runs the card-open gate of the app on an image (exit 0 = would load, 1 = refused).
 /// `--set reset=defaults` is the dialog's 「初期設定に戻す」 (card ID, password and multi-battery are kept; later `--set` keys override).
 /// A new or changed password needs `--confirm-password <same>` and clearing one needs `--confirm-clear-password`, like the dialog's prompts.
+/// `--erase-recordings <image> --erase-kind delete|initialize --out <new.img> --confirm-erase` is the 「録画データ削除」 dialog: it writes the four
+/// management sectors (generation byte, region counters; for `initialize` also the recording settings) into a NEW copy and verifies them. No recorded
+/// data is zeroed (the original does not either: older recordings are hidden by the generation rule). `--plan-only <new.json>` writes the plan only.
 enum SettingsCLI {
     struct Failure: Error { let message: String }
 
@@ -190,6 +193,43 @@ enum SettingsCLI {
             if CardPassword.unlocks(typed, stored: stored) { print("locked=true load=allowed"); return 0 }
             print("locked=true load=refused (" + CardPassword.Message.wrong + ")")
             return 1
+        } catch { return fail(error) }
+    }
+
+    static func describe(_ state: GenerationState) -> [String: Any] {
+        ["generation": Int(state.generation), "counters": state.counters.map { Int($0) }]
+    }
+
+    /// 「録画データ削除」 / 「記録設定データ初期化」 on a NEW copy of an image (see `RecordingDataEraser`).
+    static func erase(_ args: [String]) -> Int32 {
+        do {
+            guard let path = InspectionCLI.value("--erase-recordings", in: args) else { return 64 }
+            guard let kind = InspectionCLI.value("--erase-kind", in: args), let operation = RecordingDataOperation(name: kind) else {
+                throw Failure(message: "--erase-kind には delete（録画データ削除）または initialize（記録設定データ初期化）を指定してください")
+            }
+            let input = URL(fileURLWithPath: path)
+            let source = try FileByteSource(url: input)
+            let plan = try RecordingDataEraser.plan(source, operation: operation)
+            var payload: [String: Any] = [
+                "input": input.lastPathComponent, "operation": operation.rawValue, "before": describe(plan.before), "after": describe(plan.after),
+                "loadedRegions": plan.loadedRegions.map { $0.label }, "hiddenBefore": plan.hiddenBefore.map { $0.text }, "changes": plan.changes,
+                "settingsBefore": describe(plan.settingsBefore), "settingsAfter": describe(plan.settingsAfter),
+                "changesSectors": plan.changesAnything, "patches": describe(plan.patches), "dataZeroed": false]
+            if let planPath = InspectionCLI.value("--plan-only", in: args) {
+                try write(payload, to: planPath)
+                print("plan written")
+                return 0
+            }
+            guard args.contains("--confirm-erase") else {
+                throw Failure(message: operation.confirmation.replacingOccurrences(of: "\n", with: " ") + "（--confirm-erase で確認。入力は書き換えず、--out の新しいコピーにだけ書き込みます）")
+            }
+            guard let out = InspectionCLI.value("--out", in: args) else { throw Failure(message: "--out <新しいイメージ> を指定してください（入力は書き換えません）") }
+            let summary = try RecordingDataEraser.writeCopy(of: input, to: URL(fileURLWithPath: out), operation: operation)
+            let outputInfo: [String: Any] = ["name": URL(fileURLWithPath: out).lastPathComponent, "usedClone": summary.usedClone, "verified": summary.verified]
+            payload["output"] = outputInfo
+            if let report = InspectionCLI.value("--report", in: args) { try write(payload, to: report) }
+            print(operation.completion + " (clone=\(summary.usedClone), verified=\(summary.verified))")
+            return 0
         } catch { return fail(error) }
     }
 
