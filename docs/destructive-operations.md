@@ -1,8 +1,10 @@
 # Destructive operations (format, initialise, delete, password, firmware)
 
 Operations of the original PC Browser 1.9.60.0 that change an original card. This page records what was learned about
-them, and what the Mac port does about them. **None of them is implemented; the Mac port never writes to an original
-card, to a mounted volume or to a device node.** Nothing on this page is a claim that the operations work.
+them, and what the Mac port does about them. **The Mac port never writes to an original card, to a mounted volume or to a
+device node.** Setting / clearing the password, 録画データ削除 and 記録設定データ初期化 are implemented for **new image copies
+only** (Q-01 class; see below). Format, the model-specific initialisation and firmware update are not implemented. Nothing on
+this page is a claim that the operations work on a physical card: none was tried on hardware.
 
 No value of a real card or image (identifiers, sector numbers, clocks, passwords) appears here, in the code or in the tests.
 
@@ -17,6 +19,11 @@ No value of a real card or image (identifiers, sector numbers, clocks, passwords
   with a read-back SHA-256 check first, four management sectors are rewritten with the format of `settings-format.md`, and the
   edit is refused when the copy does not look like the verified Q-01 layout (identifier, backup sectors, checksum).
 * Command files for the card (`CONFIG/…`) are likewise written to copies only (`CardCommandFiles`).
+* The card password (dialog 106 and the 「パスワード」 box) is stored as a flag byte and a word of the control sector (`settings-format.md`);
+  it is set, changed or cleared in the same new-copy edit, and opening a card that has one asks for it.
+* 録画データ削除 and 記録設定データ初期化 (dialog 121) write the same four sectors, again only into a new copy
+  (`RecordingDataEraser`, `--erase-recordings`): they raise the card generation and the region counters, and 初期化 also resets the
+  settings; no recorded data is overwritten. Format and rules: `recording-data-operations.md`.
 
 ## What was observed for "フォーマット" (menu → dialog chain)
 
@@ -37,12 +44,12 @@ What this does and does not establish: the file-system part of "フォーマッ�
 visible above. The model-specific part (management sectors, area table, model initialisation, which areas are cleared) is not
 known, so a card formatted by this alone would not be a card the recorder accepts. That is the reason the operation stays refused.
 
-## Not analysed
+## Not analysed, or only partly
 
 | Operation | State |
 | --- | --- |
-| パスワード設定／解除 (dialog 106) | key derivation and stored form unknown; a wrong write could make the card unreadable |
-| 録画消去 (dialog 121) | rules for the management area and the circular areas unknown |
+| パスワード設定／解除 (dialog 106) | analysed and implemented for the Q-01 class on new copies (`settings-format.md`); other classes not analysed |
+| 録画消去 (dialog 121) | implemented on new copies (`recording-data-operations.md`); how the original hides recordings at card generation 2 or higher is unexplained, so recordings are hidden only on positive evidence |
 | 機種指定初期化 | not reached (see step 4) |
 | ファームウェア更新 | update procedure and signatures unknown |
 | 他機種の記録設定ダイアログ (131–139) | storage layout not analysed (only Q-01 class, `settings-format.md`) |
