@@ -146,6 +146,8 @@ final class ScanCancellation: @unchecked Sendable {
         if CommandLine.arguments.contains("--ui-check-extra") {
             try await checkAdditionalFeatures(result:&result,folder:folder,videoAvailable:false)
         }
+        // 映像抽出 reads telemetry only, so it is checked on recordings without video too.
+        if let controller=legacyMenu {try await checkAccelerationExtraction(controller:controller,result:&result,folder:folder)}
     }
     func captureOwnView(_ view:NSView,to url:URL) throws {
         view.layoutSubtreeIfNeeded();view.displayIfNeeded()
@@ -392,6 +394,7 @@ final class ScanCancellation: @unchecked Sendable {
         guard shown == wanted else{throw BrowserError.io("映像抽出の一覧が直接の計算と一致しません（\(shown.count)件・\(wanted.count)件）")}
         guard model.acceleration.rows.enumerated().allSatisfy({$0.element.no == $0.offset+1}) else{throw BrowserError.io("映像抽出の一覧の番号が連番ではありません")}
         info["scenes"]=scenes.count;info["listed_rows"]=shown.count;info["status"]=model.acceleration.status
+        info["rows"]=model.acceleration.rows.map{"\($0.no) \($0.entry.timeText) \($0.entry.points)"}
         if shown.isEmpty {
             guard model.acceleration.status.hasPrefix("抽出できる場面がありませんでした") else{throw BrowserError.io("映像抽出の場面なしの表示が想定と異なります")}
         }
