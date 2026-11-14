@@ -159,6 +159,23 @@ final class WriteGuardTests: XCTestCase {
         XCTAssertNotEqual(WriteGuard.checkNewOutput(URL(string: "https://example.invalid/out.png")!), .allowed)
         XCTAssertNotNil(WriteGuard.checkNewOutput(d.appendingPathComponent("nope/out.png")).reason)
     }
+    func testOutputFolderMayBeMissingButNeverAnInputOrADevice() throws {
+        let d = try temp(), card = d.appendingPathComponent("card", isDirectory: true)
+        try FileManager.default.createDirectory(at: card, withIntermediateDirectories: true)
+        XCTAssertEqual(WriteGuard.checkOutputFolder(d.appendingPathComponent("a/b/c", isDirectory: true)), .allowed)
+        XCTAssertEqual(WriteGuard.checkOutputFolder(d, protecting: [card]), .allowed)
+        XCTAssertNotEqual(WriteGuard.checkOutputFolder(card, protecting: [card]), .allowed)
+        XCTAssertNotEqual(WriteGuard.checkOutputFolder(card.appendingPathComponent("new/sub", isDirectory: true), protecting: [card]), .allowed)
+        let alias = d.appendingPathComponent("alias")
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: card)
+        XCTAssertNotEqual(WriteGuard.checkOutputFolder(alias.appendingPathComponent("new", isDirectory: true), protecting: [card]), .allowed)
+        let file = d.appendingPathComponent("plain.txt")
+        try Data([1]).write(to: file)
+        XCTAssertNotEqual(WriteGuard.checkOutputFolder(file.appendingPathComponent("sub", isDirectory: true)), .allowed)
+        XCTAssertNotEqual(WriteGuard.checkOutputFolder(URL(fileURLWithPath: "/dev/rdisk99/x")), .allowed)
+        XCTAssertNotEqual(WriteGuard.checkOutputFolder(URL(string: "https://example.invalid/x")!), .allowed)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: d.appendingPathComponent("a").path), "the check must not create anything")
+    }
     func testDevicePathsAreRefused() {
         XCTAssertNotEqual(WriteGuard.checkNewOutput(URL(fileURLWithPath: "/dev/rdisk99")), .allowed)
         XCTAssertNotEqual(WriteGuard.checkNewOutput(URL(fileURLWithPath: "/dev/null")), .allowed)

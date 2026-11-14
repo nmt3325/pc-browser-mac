@@ -1,4 +1,5 @@
 import AppKit
+import PDFKit
 import SwiftUI
 import PCBrowserCore
 
@@ -159,11 +160,22 @@ final class ScanCancellation: @unchecked Sendable {
         guard model.reportNotes()=="GUI checkpoint — raw semantics remain unclassified" else{throw BrowserError.io("レポート備考を保存できません")}
         model.saveReportNotes(notes);model.showReport=true
         for _ in 0..<30{if window?.attachedSheet != nil{break};try await Task.sleep(nanoseconds:100_000_000)}
-        try await Task.sleep(nanoseconds:600_000_000)
+        try await Task.sleep(nanoseconds:2_500_000_000)
         guard let reportView=window?.attachedSheet?.contentView else{throw BrowserError.io("録画レポートを表示できません")}
         try captureOwnView(reportView,to:folder.appendingPathComponent("recording-report.png"))
         model.showReport=false;try await Task.sleep(nanoseconds:300_000_000)
         result["settings_and_report_views_captured"]=true;result["report_notes_local_roundtrip"]=true
+        // Both printed layouts from made-up values: one A4 PDF page each, plus a picture of the page.
+        var pages:[String:Any]=[:]
+        for kind in [LegacyReportKind.event,LegacyReportKind.continuous] {
+            let synthetic=LegacyReportPage.syntheticReport(kind:kind),pictures=kind == .event ? LegacyReportPage.syntheticThumbnails():[]
+            let text="備考のテスト\n二行目",data=try LegacyReportPage.pdf(synthetic,thumbnails:pictures,notes:text)
+            guard let document=PDFDocument(data:data),document.pageCount == 1,let first=document.page(at:0),abs(first.bounds(for:.mediaBox).width-595)<1 else{throw BrowserError.io("レポートページPDFを検証できません")}
+            guard let image=LegacyReportPage.image(synthetic,thumbnails:pictures,notes:text),let png=LegacyReportPage.png(image) else{throw BrowserError.io("レポートページを描画できません")}
+            try png.write(to:folder.appendingPathComponent("report-page-\(kind.rawValue).png"))
+            pages[kind.rawValue]=["pdf_bytes":data.count,"png_bytes":png.count]
+        }
+        result["legacy_report_pages"]=pages
         if CommandLine.arguments.contains("--ui-check-earth") {
             var style=TrackStyle();style.showPoints=true;style.lineRGB="12A4E0";style.pointRGB="E06012";style.alpha=173;style.width=7;style.density=17
             let kml=folder.appendingPathComponent("explicit-earth-\(UUID().uuidString).kml")

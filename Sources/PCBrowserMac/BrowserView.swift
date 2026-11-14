@@ -19,6 +19,7 @@ struct BrowserView: View {
                     metadata.tabItem{Label("録画情報",systemImage:"info.circle")}
                     SensorPanel(model:model).tabItem{Label("センサー",systemImage:"waveform.path")}
                     exportRange.tabItem{Label("書き出し範囲",systemImage:"scissors")}
+                    TriggerListPanel(model:model).tabItem{Label("トリガリスト",systemImage:"bolt.horizontal")}
                 }.frame(minHeight:165,idealHeight:195,maxHeight:230)
                 HStack(alignment:.top) {Text(model.status).lineLimit(2);Spacer();if model.index?.isPartialScan==true {Text("部分コピー／一部走査").foregroundStyle(.orange)}}.font(.caption).foregroundStyle(.secondary)
                 if !model.archiveNotice.isEmpty{Text(model.archiveNotice).font(.caption2).foregroundStyle(model.archiveNotice.contains("照合済み") ? Color.secondary:Color.orange)}
