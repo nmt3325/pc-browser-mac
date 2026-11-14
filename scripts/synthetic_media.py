@@ -45,7 +45,9 @@ def put32(buf, offset, value):
     struct.pack_into('<I', buf, offset, value & 0xFFFFFFFF)
 
 
-def build():
+def build(blank_video=False):
+    """`blank_video` keeps every header (clock, GPS, sensors, sizes) but leaves the video and audio areas zero-filled,
+    like the continuous recordings of the sample card."""
     units, audio = access_units(), pcm_chunks()
     per_block = FRAMES // BLOCKS
     # Layout first: every frame is start header + video sectors + audio sectors + end header.
@@ -104,9 +106,10 @@ def build():
                 struct.pack_into('<h', header, offset, value)
             image[start * 512:(start + 1) * 512] = header
             video_start = (start + 1) * 512
-            image[video_start:video_start + video] = units[index]
             audio_start = video_start + (video + 511) // 512 * 512
-            image[audio_start:audio_start + aux] = audio[index]
+            if not blank_video:
+                image[video_start:video_start + video] = units[index]
+                image[audio_start:audio_start + aux] = audio[index]
             put32(header, 0, 0xFFFFD102)
             end = start + span - 1
             image[end * 512:(end + 1) * 512] = header

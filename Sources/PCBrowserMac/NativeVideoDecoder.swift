@@ -4,6 +4,12 @@ import VideoToolbox
 import CoreImage
 import PCBrowserCore
 
+/// The frame has no picture (empty or zero-filled video area, or only delimiters/parameter sets). The recording is still usable for its
+/// clock, GPS, sensors and reports, so callers show this as a notice in the preview instead of a decoder error.
+struct VideoUnavailableError: LocalizedError, Equatable {
+    var errorDescription: String? { "この位置には映像データがありません（映像領域が空、または画像を含みません）。時刻・GPS・センサーなどの情報は表示できます" }
+}
+
 final class NativeVideoDecoder {
     private var session: VTDecompressionSession?
     private var format: CMVideoFormatDescription?
@@ -41,6 +47,7 @@ final class NativeVideoDecoder {
     }
     func decode(_ data: Data, ordinal: Int, fps: Int) throws -> CGImage {
         let units = AnnexB.units(data)
+        if AnnexB.isPictureless(data, units: units) { throw VideoUnavailableError() }
         if session == nil { try configure(units) }
         guard let session, let format else { throw BrowserError.io("デコーダーの初期化に失敗しました") }
         let avcc = try AnnexB.avcc(units)

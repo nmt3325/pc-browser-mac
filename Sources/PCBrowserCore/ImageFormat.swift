@@ -235,6 +235,15 @@ public enum ImageScanner {
 }
 
 public enum AnnexB {
+    /// True when a frame's video area holds only zero bytes (or nothing). The continuous recordings of the sample card keep their
+    /// frame headers (clock, GPS, sensors) but their video area is zero-filled, which is not a decoder fault.
+    public static func isBlankPayload(_ data: Data) -> Bool { data.allSatisfy { $0 == 0 } }
+    /// True when at least one NAL unit is a coded slice (non-IDR or IDR); delimiters, SEI and parameter sets never make a picture.
+    public static func hasPicture(_ units: [Data]) -> Bool { units.contains { !$0.isEmpty && [1, 5].contains($0[$0.startIndex] & 31) } }
+    /// True when the frame carries no picture: only zero bytes, or only well-formed NAL units that never hold one (a few frames of
+    /// the sample card's continuous recordings keep an access-unit delimiter). Non-zero bytes without any start code are damaged
+    /// data and stay a decoder error, so a damaged frame is never presented as "no video".
+    public static func isPictureless(_ data: Data, units: [Data]) -> Bool { units.isEmpty ? isBlankPayload(data) : !hasPicture(units) }
     public static func units(_ data: Data) -> [Data] {
         let a = Array(data); var starts: [(Int, Int)] = []; var i = 0
         while i + 3 <= a.count {
