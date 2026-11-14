@@ -109,9 +109,12 @@ final class ExtendedTests: XCTestCase {
         var d=fatImage();d[512+22]=200
         XCTAssertThrowsError(try CardSettingsReader.read(MemorySource(d)))
     }
-    func testAllNineProjectionModesHaveStableIDs() {
-        XCTAssertEqual(ProjectionMode.allCases.count,9)
+    func testAllProjectionModesHaveStableIDs() {
+        // Nine Metal projections (shader IDs are the positions) plus the 16分割 frame-history sheet appended last.
+        XCTAssertEqual(ProjectionMode.allCases.count,10)
+        XCTAssertEqual(ProjectionMode.metalModes.count,9)
         XCTAssertEqual(ProjectionMode.grid16.shaderID,8)
+        XCTAssertEqual(ProjectionMode.allCases.last,.frameHistory)
         XCTAssertEqual(ProjectionSettings().frontRotation,-90)
     }
 

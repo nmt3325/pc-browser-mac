@@ -2,13 +2,20 @@ import Foundation
 
 public enum ProjectionMode: String, CaseIterable, Sendable, Codable {
     case raw, perspective, panorama, frontRear, quad, dome, ring, globe, grid16
+    /// 表示 ▸ 画面表示 ▸ 16分割表示 of the original: the sixteen most recent frames as raw pictures (`FrameHistorySheet`).
+    /// Composed with CoreGraphics from decoded frames, not by the Metal shader; keep it the last case (shader IDs are positions).
+    case frameHistory
     public var label: String {
         switch self {
         case .raw:return "魚眼（元映像）";case .perspective:return "フラット / VR";case .panorama:return "360°パノラマ"
-        case .frontRear:return "前後2画面";case .quad:return "4分割";case .dome:return "ドーム";case .ring:return "リング";case .globe:return "全球";case .grid16:return "16分割"
+        case .frontRear:return "前後2画面";case .quad:return "4分割";case .dome:return "ドーム";case .ring:return "リング";case .globe:return "全球";case .grid16:return "16方向ビュー（Mac独自）";case .frameHistory:return "16分割（直近16コマ）"
         }
     }
     public var shaderID: Int { Self.allCases.firstIndex(of:self)! }
+    /// The modes the Metal shader re-projects; `frameHistory` is composed from several frames instead.
+    public static var metalModes: [ProjectionMode] { allCases.filter { $0 != .frameHistory } }
+    /// The mode a single frame is projected with: the history sheet shows raw pictures.
+    public var metalMode: ProjectionMode { self == .frameHistory ? .raw : self }
     public var aspect: Double { switch self {case .raw:return 2560.0/1080;case .panorama:return 2;case .frontRear:return 32.0/9;case .dome,.ring,.globe:return 1;default:return 16.0/9} }
 }
 public struct ProjectionSettings: Sendable, Codable, Equatable {

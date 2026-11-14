@@ -20,7 +20,8 @@ final class NativeProjection {
     }
     /// Re-projects the frame, then applies the display flip / rotation / zoom state (right-click menu) with CoreGraphics.
     func render(_ image: CGImage, settings: ProjectionSettings, width requested: Int = 1280) throws -> CGImage {
-        let s=settings.clamped
+        var s=settings.clamped
+        s.mode=s.mode.metalMode   // 16分割表示 (frameHistory) is composed elsewhere; a single frame is shown raw
         let projected=try project(image,settings:s,width:requested)
         return s.view.isIdentity ? projected:(ViewTransformRenderer.apply(projected,s.view) ?? projected)
     }
