@@ -1,21 +1,39 @@
-# 映像抽出 (acceleration extraction) — research notes, NOT implemented
+# 映像抽出 (acceleration extraction) — measured model, port and what is still unknown
 
-Status: the scoring rule below was read from the static disassembly of the original 1.9.60.0; it was **not** compared with the running original and **no Swift code exists for it**. A faithful port still needs the recording segmentation rule (open item below). Generic text only: no addresses, recordings or card values are recorded here.
+Status: **written into the Swift code of the build-17 candidate; not yet built in CI and not yet run on a Mac when this page was written** (`TODO.md` carries the maintained status; this page records the evidence). The model below was **measured on the running original 1.9.60.0** (Wine, scratch copy of the sample card's image, FDR-820 class) and replaces the earlier static-disassembly notes (four channels, a 118 s rule, per-channel thresholds), which the measurements did not support. Generic text and aggregate numbers only: no card addresses, serial numbers, positions or recording dates are recorded here.
 
-## Flow in the original
-1. The handler takes the recordings that are **checked** in the main list (checkbox state of every row).
-2. A parameter dialog (resource 241, title 「加速度抽出パラメータ調整」) shows a slider with the captions 「個数」 and 「値」; the chosen value is kept in the main window object (default 30). The same dialog is what `docs/dialog-port-map.md` lists as 加速度パラメーター.
-3. A modal progress dialog (the shared progress template, task type "acceleration extraction") runs a worker thread. The worker calls the extraction routine and then reports success or failure to the dialog.
-4. The routine returns a list of *entries* (candidate scenes). Each entry is checked with the original's duration helper, then shown in a five-column table: No., start time, 動きポイント, and two strings taken from the entry's first block. Afterwards the main list is rebuilt with six columns, and 「ファイル出力」 (resource 242, see `docs/dialog-port-map.md`) writes the result.
+The port is a *fit* of what the original showed on one card, not a trace of its code. Parts that rest on a single observation or were never observed are listed under "Not established"; nothing here may be read as full equivalence.
 
-## Scoring rule (as read from the code)
-* Four sample channels per entry (16-bit signed arrays; their meaning is not confirmed — presumably acceleration/gyro raw values like the ones the app already shows).
-* A scale factor `D` (a power of ten) keeps the integer arithmetic exact. Per channel a baseline is the integer mean of the samples, scaled by `D`; per channel the threshold is `t_c × D`, where the four `t_c` are 16-bit parameters of the main window object (two packed dwords).
-* For every entry with at least one sample, the counter of channel `c` is the number of samples with `|s × D − baseline_c| > threshold_c`. 動きポイント = the sum of the four counters.
-* Entries are kept sorted by 動きポイント, **descending**; an entry is inserted before the first entry with fewer points, so ties keep their order of creation.
-* An entry whose last block time stamp (year-2000, month, day, hour, minute, second) is less than **118 s** after its start is discarded.
+## Flow in the original (observed)
+1. The handler takes the recordings that are **checked** in the main (continuous) list. With nothing checked the original shows the error 「選択されたデータがありません。」.
+2. A parameter dialog (resource 241, title 「加速度抽出パラメータ調整」) shows a slider with the captions 「個数」 and 「値」; range 0–100, default 30. (The same dialog is what `docs/dialog-port-map.md` lists as 加速度パラメーター.)
+3. A modal progress dialog runs a worker thread over the checked recordings.
+4. The result is a table with the columns **No. / 時刻 (`yyyy/MM/dd HH:mm`) / 動きポイント / 機器ID** (the device's ID string), highest 動きポイント first. A later step, 「ファイル出力」 (resource 242), writes the result; that dialog and the six-column list the main window shows afterwards were not captured and are not ported.
 
-## Open (why it is not shipped)
-* The loop that cuts the selected recordings into entries (about 10 KB of x86 code driven by frame-header marker words) is not traced; without it the entries — and so the points — cannot match the original.
-* How the dialog's slider value maps to the four thresholds, and where the 「個数」 (maximum count) truncation happens, is not located.
-* Verification plan once traced: run the original under Wine on a copy of the sample card, record the table for the same checked recordings, and compare entry by entry with the Mac implementation in a unit test built from synthetic samples plus a real-data check on the Mac.
+## Measured model (what the Mac code does)
+Source: `Sources/PCBrowserCore/AccelerationExtraction.swift`; tests: `Tests/PCBrowserCoreTests/AccelerationExtractionTests.swift` (synthetic frames).
+
+* **Channels.** Three acceleration channels, the 16-bit signed values at frame-header offsets 0x46, 0x48 and 0x4A (`PacketTelemetry.accelerationRaw`). The fourth channel of the static notes (gyro), the event bytes and the trigger bytes were zero in every measured recording, so a role for them could not be observed.
+* **Baseline.** For every recording, the mean of each channel over all its frames (orphan leading frames included).
+* **Points per frame.** The number of channels whose value lies farther than **100** raw units from their mean. 動きポイント of a scene = the sum over its frames. The static notes' per-channel thresholds, scaled integer baselines and four channels do not describe what the original lists; the single threshold of 100 around the recording's own mean matched every compared row.
+* **Cutting into scenes.** The first scene starts at the first frame. Whenever the *secondary* clock of a frame (`PacketTelemetry.secondaryClock`, the second clock field of the frame header) reads a multiple of **120 s of epoch time** (an even minute, second 0) that is later than the previous such moment, the **next intra (I) frame** closes the current scene and opens the next one (if the frame itself is intra it closes at once). The scene that is never closed — the end of the recording — is not listed.
+* **Keep rule.** A closed scene is listed only when `secondary clock of the closing frame − primary clock of the scene's first frame ≥ 120` whole seconds (a frame without a readable clock keeps the scene). Where the two clocks agree, every complete scene spans exactly 120 s and is kept, and a partial first scene is kept only when it lasts at least two minutes. Where the secondary clock is ahead of the primary one (about 108 s in two recordings of the card), complete scenes span 120 s plus that offset and a partial first scene is kept even when it is about that much shorter than two minutes.
+* **Missing leading frames ("phantom" frames).** The header field at offset 4 is a per-block frame ordinal (0…449; it restarts at every 450-frame block and shows no jump in any recording). When a recording's first block lost its head (the first packet carries ordinal *n* > 0 because the block's start was overwritten), the original counts those *n* missing frames as zero-valued samples in the first scene: first-scene points += *n* × (number of channels whose mean is farther than 100 from zero). *n* is not part of the mean.
+* **Ranking and count.** Scenes of all checked recordings are sorted by 動きポイント, descending, stable (equal scores keep the order of creation), and the first 個数 rows are shown (0…100). The table's time column shows the minute of the scene's first frame (`yyyy/MM/dd HH:mm`, 「時刻不明」 without a readable clock); choosing a row seeks the player to that frame.
+* **UI and CLI (Mac).** Toolbar button and menu item 「映像抽出（加速度）…」 (Mac extras) → alert 「選択されたデータがありません。」 when no continuous recording is ticked, otherwise the parameter sheet 「加速度抽出パラメータ調整」 (個数 slider, 値, OK / キャンセル) → progress → bottom tab 「映像抽出」 with the table above. CLI: `--accel-extract 6,7,…` (1-based positions of continuous recordings) with `--accel-count N` writes the same table into the JSON report (`acceleration_extraction`).
+
+## Evidence (aggregate; oracle = original under Wine on a copy of the card)
+* **Rows compared:** 64 or more result rows over several recording subsets matched the model as fitted in a Python script on the Linux machine; for the first continuous recording of the card alone the original listed two rows (290 points and 122 points) and the fit reproduces both. The Swift port has not been compared yet.
+* **Keep rule, partial first scenes** (span in whole seconds): the two kept first partials measured 150 s and 130 s (the two recordings whose secondary clock is about 108 s ahead of the primary one); the dropped partials measured 57, 64, 85, 26, 6, 103, 46, 51, 84, 108, 19, 58, 100, 117 and 63 s — every one below 120, none above.
+* **Keep rule, complete scenes:** span exactly 120 s where the two clocks agree (four recordings) and 227–230 s where the secondary clock is ahead by about 108 s; all were listed.
+* **Phantom frames:** the only recording whose first block lost its head had ordinal 61 at its first packet; its first scene lists 122 = 61 × 2 points (two channels with a mean beyond ±100); the model gives the scene's real frames no points. All other measured recordings start at ordinal 0.
+* **Orphan leading frames of the first recording** are adopted by the existing catalog logic of the Mac code once the card image has real payload sectors; the earlier apparent difference came from a header-only partial copy of the image (zero-filled sectors), not from a missing rule.
+
+## Not established
+* The phantom-frame rule rests on **one** recording (one data point, 122 = 61 × 2); other readings that give the same number (for example counting by sample index inside the first block) were not separated.
+* The order of equal scores **across recordings**, and the exact tie behaviour of the original's sorted insertion, were not observed (within one recording, the stable order matches).
+* How the original treats the slider when it is smaller than the number of scenes: the oracle comparisons used the slider's end position, so truncation to 個数 rows is the natural reading, not an independent measurement.
+* A fourth (gyro) channel, per-channel thresholds, and any role of the event/trigger bytes: unobservable on this card (all zero).
+* Models other than the FDR-820 class (whether the feature is disabled or parameterised differently for other classes), **event recordings** (not ticked in any run), recordings with unreadable clocks, and cards from other firmware versions.
+* The 「ファイル出力」 dialog (242) and the post-extraction main list.
+* Real-data check of the Swift implementation on a Mac: pending (the acceleration and clock fields live in frame headers, so the card's header-only sparse copy is enough to compare the table with the oracle rows once the build-17 artifact exists).

@@ -123,6 +123,33 @@ enum InspectionCLI {
                 let summary=try ImageCopy.write(source:source,to:URL(fileURLWithPath:path))
                 report["image_copy"]=try JSONSerialization.jsonObject(with:JSONEncoder().encode(summary))
             }
+            if let list=value("--accel-extract",in:args) {
+                // 映像抽出 of the original on the listed recordings: 1-based positions in the catalog, continuous recordings only.
+                let tokens=list.split(separator:","),numbers=tokens.compactMap{Int($0)}
+                guard !numbers.isEmpty,numbers.count == tokens.count else{throw BrowserError.invalid("--accel-extract は録画番号（1始まり・カンマ区切り）です")}
+                var count=AccelerationExtraction.defaultCount
+                if let text=value("--accel-count",in:args) {
+                    guard let n=Int(text),AccelerationExtraction.countRange.contains(n) else{throw BrowserError.invalid("--accel-count は0〜100です")}
+                    count=n
+                }
+                let continuous=Set(result.continuousRecordings.map(\.id))
+                var scenes:[AccelerationEntry]=[],perRecording:[[String:Any]]=[]
+                for number in numbers {
+                    guard number >= 1,number <= result.recordings.count else{throw BrowserError.invalid("録画番号 \(number) は範囲外です（1〜\(result.recordings.count)）")}
+                    let summary=result.recordings[number-1]
+                    guard continuous.contains(summary.id) else{throw BrowserError.invalid("録画番号 \(number) は連続録画ではありません（映像抽出は連続録画のみ）")}
+                    let loaded=try CatalogScanner.loadRecording(summary,source:source)
+                    let found=AccelerationExtraction.entries(in:loaded)
+                    scenes+=found
+                    perRecording.append(["number":number,"recording":summary.id,"frames":loaded.packets.count,"first_sequence":Int(loaded.packets.first?.sequence ?? 0),"listed_scenes":found.count,
+                        "scenes":found.map{["first_frame":$0.firstFrame,"frames":$0.frameCount,"time":$0.timeText,"points":$0.points] as [String:Any]}])
+                }
+                let device=DeviceIdentity.read(from:source,control:result.control) ?? "—"
+                let rows=AccelerationExtraction.ranked(scenes,count:count)
+                report["acceleration_extraction"]=["scope":"Rules measured on the running original 1.9.60.0 (FDR-820 continuous recordings); see docs/video-extraction-research.md for what is not established",
+                    "count":count,"recordings":numbers,"device_id":device,"listed_scenes":scenes.count,
+                    "table":rows.enumerated().map{[$0.offset+1,$0.element.timeText,$0.element.points,device] as [Any]},"per_recording":perRecording] as [String:Any]
+            }
             if rawQueryRequested {
                 func integer(_ flag:String,_ fallback:Int,_ range:ClosedRange<Int>) throws ->Int {
                     guard let text=value(flag,in:args) else{return fallback}
