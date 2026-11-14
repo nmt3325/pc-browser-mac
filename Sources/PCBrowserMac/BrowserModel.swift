@@ -51,6 +51,10 @@ import PCBrowserCore
     @Published var rawQueryResults: [String: Bool] = [:]
     @Published var showReport = false
     @Published var showHistoryReport = false
+    /// ログデータ変換 dialog (the Google Earth file of the whole journal).
+    @Published var showLogConversion = false
+    /// Set while the journal is read for a ログデータ変換 that was asked for before the 履歴記録 list was opened.
+    var pendingLogConversion = false
     /// Rows of the 履歴記録 list chosen for the 履歴記録レポート (none = all rows).
     @Published var selectedJournalRows = Set<Int>()
     /// GUI self-check only: a made-up report shown instead of the loaded journal.
@@ -164,6 +168,19 @@ import PCBrowserCore
         guard historyLog != nil || historyReportOverride != nil else{errorMessage="履歴記録レポートには読み込み済みの履歴記録が必要です。履歴記録の一覧を開いて読み込んでください";return}
         showHistoryReport=true
     }
+    /// ログデータ変換 (menu 374, toolbar ログ変換): the dialog of the Google Earth file of the 履歴記録 journal. The journal is read first when
+    /// its list has not been opened yet; an input without a journal area falls back to the KML of the selected recordings.
+    func openLogConversion() {
+        if historyLog != nil {showLogConversion=true;return}
+        guard source != nil,let index else{errorMessage="ログデータ変換にはSDカードまたはIMGを開く必要があります";return}
+        guard !scanning else{errorMessage="索引の作成が終わってからログデータ変換を開始してください";return}
+        guard index.layout?.history != nil else {
+            if selectedRecordings.isEmpty {errorMessage="この入力には履歴記録の記録領域がありません。録画を選ぶと、その録画のGPSをKMLに書き出します"} else {exportLog("kml")}
+            return
+        }
+        pendingLogConversion=true
+        loadHistoryIfNeeded()
+    }
     func video(for row:HistoryRow)->Recording? {historyLog?.matchingRecording(for:row,in:index?.continuousRecordings ?? [])}
     func showVideo(for row:HistoryRow) {if let r=video(for:row){search="";listKind = .continuous;selectedID=r.id}}
     /// The per-second journal behind the event region is read only when its tab is opened (about 150 MB on a full card).
@@ -177,7 +194,9 @@ import PCBrowserCore
                 guard generation==token else{return}
                 historyLoading=false;historyLog=log
                 if let log {historyStatus="\(log.rows.count)件 · 秒単位の記録 \(log.sampleRecords)件"} else {historyStatus="履歴記録の記録領域がこの入力に含まれていないか、有効な記録がありません"}
-            }catch{guard generation==token else{return};historyLoading=false;historyStatus="履歴記録を読み取れませんでした: "+error.localizedDescription}
+                if pendingLogConversion {pendingLogConversion=false;if log != nil {showLogConversion=true} else {errorMessage=historyStatus}}
+            }catch{guard generation==token else{return};historyLoading=false;historyStatus="履歴記録を読み取れませんでした: "+error.localizedDescription
+                if pendingLogConversion {pendingLogConversion=false;errorMessage=historyStatus}}
         }
     }
     private func loadEvents(_ result:ImageIndex,source:any ByteSource,token:UUID) {
@@ -222,7 +241,7 @@ import PCBrowserCore
         audioPlayer=nil;audioClip=nil;renderer=nil;timeline=RecordingTimeline(packets:[])
         frameIndex=0;scrubber=0;scanning=false;busy=false;progress=0;selectionLoading=false;rendering=false
         selectedExports=[];cardFiles=[];rawQueryResults=[:];route=[];sensors=[];errorMessage=nil
-        eventEntries=[];historyLog=nil;selectedJournalRows=[];historyStatus="";historyLoading=false;listKind = .continuous
+        eventEntries=[];historyLog=nil;selectedJournalRows=[];historyStatus="";historyLoading=false;pendingLogConversion=false;showLogConversion=false;listKind = .continuous
         useExternalGPS=false;externalGPSTrack=nil;externalGPSStatus="外部ログ未選択";deviceTimeZoneID="";gpsLogOffset=0
         archiveNotice="";cardNotice="";audioStatus="音声なし";audioDuration=0;audioDrift=0;sourceName="未選択"
         firstListSeconds=0;catalogSeconds=0;detailSeconds=0;status="IMGファイルまたはSDカードを選択してください"
@@ -244,7 +263,7 @@ import PCBrowserCore
     private func load(_ source:any ByteSource,name:String,limit:UInt64?=nil,recovery:Bool=false) {
         cancel();generation=UUID();let token=generation,flag=ScanCancellation(),began=ProcessInfo.processInfo.systemUptime;cancellation=flag
         self.source=source;scanLimit=limit;index=nil;selectedID=nil;image=nil;sourceName=name;progress=0;scanning=true;busy=false;errorMessage=nil;selectedExports=[];cardFiles=[];rawQueryResults=[:]
-        eventEntries=[];historyLog=nil;selectedJournalRows=[];historyStatus="";historyLoading=false;listKind = .continuous
+        eventEntries=[];historyLog=nil;selectedJournalRows=[];historyStatus="";historyLoading=false;pendingLogConversion=false;showLogConversion=false;listKind = .continuous
         useExternalGPS=false;externalGPSTrack=nil;externalGPSStatus="外部ログ未選択";deviceTimeZoneID="";gpsLogOffset=0
         firstListSeconds=0;catalogSeconds=0;detailSeconds=0;archiveNotice=(source as? ArchiveSource)?.isHashVerified == false ? "バックアップSHA-256: 未照合（一覧表示後に照合）":(source is WindowsBackupSource || source is WindowsBackupSet ? "Windows BAK\((source as? WindowsBackupSet).map{"（\($0.parts.count)ファイル）"} ?? ""): 部分コピー・読み取り専用（元形式にSHA-256照合なし）":"")
         status=recovery ? "全領域を読み取り専用で復旧走査しています…":"映像を読み込まずに録画索引を取得しています…"
