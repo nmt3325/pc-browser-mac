@@ -10,7 +10,7 @@ import Foundation
 ///   of the last frames as the picture cache can hold are converted: reverse play then finds the frames before the target in the cache,
 ///   and no picture is made that would be evicted again at once.
 public struct FrameDecodePlan: Equatable, Sendable {
-    /// Start a new decoder at `decodeFrom` (a keyframe) instead of continuing the current one.
+    /// Start decoding again at `decodeFrom` (a keyframe) instead of continuing after the last decoded frame.
     public let restart: Bool
     /// First frame to decode. The target is the last one.
     public let decodeFrom: Int

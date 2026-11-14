@@ -66,6 +66,7 @@ final class ScanCancellation: @unchecked Sendable {
             model.pause()
             result["playback_shown_frames"]=model.renderCount;result["playback_show_mean_ms"]=model.renderCount>0 ? model.renderSecondsTotal/Double(model.renderCount)*1000:0.0;result["playback_show_max_ms"]=model.renderSecondsMax*1000
             for (key,value) in await model.renderTiming() {result[key]=value}
+            result["playback_show_log"]=model.renderLog;result["playback_render_call_ms"]=(await model.renderCallMilliseconds())
             result["playback_advanced"] = model.frameIndex > 20
             result["playback_advanced_to_frame"] = model.frameIndex
             guard model.frameIndex >= 50 else { throw BrowserError.io("実時間再生で十分に位置が進みませんでした") }

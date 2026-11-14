@@ -16,6 +16,7 @@ final class NativeVideoDecoder {
     private let lock = NSLock()
     private var output: CVPixelBuffer?
     private var callbackStatus: OSStatus = 0
+    private var configuredSPS: Data?, configuredPPS: Data?
     /// One Core Image context for the whole process: making a context is slow, and a new decoder is made at every seek and at every
     /// keyframe that playback reaches after skipping frames. (`CIContext` is safe to share between threads.)
     private static let context = CIContext()
@@ -27,6 +28,7 @@ final class NativeVideoDecoder {
             throw BrowserError.unsupported("この位置にはSPS/PPSがありません。直前のIフレームから再生してください")
         }
         let a = Array(sps), b = Array(pps)
+        configuredSPS = Data(sps); configuredPPS = Data(pps)
         var desc: CMVideoFormatDescription?
         let status = a.withUnsafeBufferPointer { ap in b.withUnsafeBufferPointer { bp in
             let pointers = [ap.baseAddress!, bp.baseAddress!]
@@ -54,6 +56,13 @@ final class NativeVideoDecoder {
     func decodeBuffer(_ data: Data, ordinal: Int, fps: Int) throws -> CVPixelBuffer {
         let units = AnnexB.units(data)
         if AnnexB.isPictureless(data, units: units) { throw VideoUnavailableError() }
+        // The decoder is reused for every keyframe the renderer restarts at. A keyframe whose parameter sets differ from the session's
+        // (another picture size or profile) needs a new session.
+        if session != nil, let sps = units.first(where: { $0.first.map { $0 & 31 == 7 } ?? false }),
+           let pps = units.first(where: { $0.first.map { $0 & 31 == 8 } ?? false }), sps != configuredSPS || pps != configuredPPS {
+            if let session { VTDecompressionSessionInvalidate(session) }
+            session = nil; format = nil; configuredSPS = nil; configuredPPS = nil
+        }
         if session == nil { try configure(units) }
         guard let session, let format else { throw BrowserError.io("デコーダーの初期化に失敗しました") }
         let avcc = try AnnexB.avcc(units)
@@ -100,7 +109,7 @@ actor FrameRenderer {
     private static let cachedFrames = 12
     /// Where the time of showing frames goes (decoding in the video decoder, converting the decoded frame to a picture). The GUI check
     /// reports the means, so a slow machine can be told from a slow step.
-    struct Timing: Sendable { var decodeSeconds = 0.0, decodedFrames = 0, convertSeconds = 0.0, convertedFrames = 0 }
+    struct Timing: Sendable { var decodeSeconds = 0.0, decodedFrames = 0, convertSeconds = 0.0, convertedFrames = 0, calls: [Double] = [] }
     private(set) var timing = Timing()
     func resetTiming() { timing = Timing() }
     // Reverse/step-back must not construct a new VT/CI session for every
@@ -112,6 +121,8 @@ actor FrameRenderer {
         fps = max(1, packets.compactMap { $0.telemetry.clock?.nominalFPS }.first ?? 30)
     }
     func render(_ index: Int) throws -> CGImage {
+        let began = ProcessInfo.processInfo.systemUptime
+        defer { if timing.calls.count < 400 { timing.calls.append(ProcessInfo.processInfo.systemUptime - began) } }
         guard packets.indices.contains(index) else { throw BrowserError.invalid("フレーム番号が範囲外です") }
         // A cache hit does not move `last`: it describes the decoder's state,
         // not the frame currently displayed by the UI.
@@ -125,25 +136,34 @@ actor FrameRenderer {
         // makes a large forward seek inexpensive.
         let plan = FrameDecodePlan.make(target: index, lastDecoded: last, keyframe: start, hasDecoder: decoder != nil, cacheCapacity: Self.cachedFrames)
         if plan.restart {
-            decoder = NativeVideoDecoder(); last = plan.decodeFrom - 1; cached = nil; cachedIndex = -1
+            // The decoder (its VideoToolbox session) is kept: a keyframe starts a new group of pictures by itself, so neither a seek nor
+            // every keyframe that playback reaches needs a new session. (An error drops the decoder, see below.)
+            if decoder == nil { decoder = NativeVideoDecoder() }
+            last = plan.decodeFrom - 1; cached = nil; cachedIndex = -1
         }
         var result: CGImage?
-        for i in plan.decodeFrom...index {
-            let p = packets[i]
-            let data = try source.read(at: p.payloadOffset, count: p.videoBytes)
-            let began = ProcessInfo.processInfo.systemUptime
-            let buffer = try decoder!.decodeBuffer(data, ordinal: i, fps: fps)
-            let decoded = ProcessInfo.processInfo.systemUptime
-            timing.decodeSeconds += decoded - began; timing.decodedFrames += 1
-            if i < plan.convertFrom {
-                last = i
-                continue
+        do {
+            for i in plan.decodeFrom...index {
+                let p = packets[i]
+                let data = try source.read(at: p.payloadOffset, count: p.videoBytes)
+                let decodeStart = ProcessInfo.processInfo.systemUptime
+                let buffer = try decoder!.decodeBuffer(data, ordinal: i, fps: fps)
+                let decoded = ProcessInfo.processInfo.systemUptime
+                timing.decodeSeconds += decoded - decodeStart; timing.decodedFrames += 1
+                if i < plan.convertFrom {
+                    last = i
+                    continue
+                }
+                let image = try decoder!.picture(of: buffer)
+                timing.convertSeconds += ProcessInfo.processInfo.systemUptime - decoded; timing.convertedFrames += 1
+                result = image; last = i; cached = image; cachedIndex = i
+                let cost = image.bytesPerRow.multipliedReportingOverflow(by: image.height)
+                if !cost.overflow { recentFrames.insert(image, at: i, bytes: cost.partialValue) }
             }
-            let image = try decoder!.picture(of: buffer)
-            timing.convertSeconds += ProcessInfo.processInfo.systemUptime - decoded; timing.convertedFrames += 1
-            result = image; last = i; cached = image; cachedIndex = i
-            let cost = image.bytesPerRow.multipliedReportingOverflow(by: image.height)
-            if !cost.overflow { recentFrames.insert(image, at: i, bytes: cost.partialValue) }
+        } catch {
+            // After an error the next request starts again from a keyframe with a new decoder.
+            decoder = nil
+            throw error
         }
         guard let result else { throw BrowserError.io("フレームが取得できません") }
         cached = result
