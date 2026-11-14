@@ -1,4 +1,4 @@
-# Validation history — runs 22 to 63 (original-application oracle)
+# Validation history — runs 22 to 111 (original-application oracle)
 
 This page records how the Mac port was checked against the **original Windows PC Browser 1.9.60.0** after build 8, and what each check did or did not establish. It never contains private card data: record names, clock values, counters, sector numbers, card or device identifiers and password values stay on the analysis host and the home Mac and are described here only in aggregate.
 
@@ -54,6 +54,22 @@ The original's "記録設定" dialog was driven under the same hook. Observation
 - the dialog data model (which controls exist, their item lists and defaults) is read from the dialog traffic, not guessed.
 
 The byte-level layout and the Mac encoder/decoder are documented in `settings-format.md`.
+
+## Runs 64 to 111 (aggregate)
+
+Everything below was compared on the Linux machine that runs the original (Wine), against the output of CI builds and of the independent reference scripts in `tools/`. No Mac was reachable for these runs; the build-14 artifact (run #111) has therefore not been started on a Mac (`validation-gaps.md`).
+
+| Topic | Evidence | Where documented |
+|---|---|---|
+| 37-model table and the six settings-dialog classes | model code in the control sector (offset 0x1DC) changed on a scratch copy; window title and dialog size observed per code | `settings-format.md` |
+| Event and continuous report files | CSV files of the original and of the Mac port byte-identical on the sample card; report window, page and trigger list compared with the original's | `report-format.md` |
+| History list and history report | row starts 517/517, durations 516/517; summary CSV 514 of ≈520 lines identical; data CSV 17 of ≈604,500 lines differ; rounding rule (printf-exact) found by the byte comparison | `history-report.md` |
+| List tab labels | tabs are イベント記録 / 常時録画 / 履歴記録 (an earlier label assumption was corrected) | `dialog-port-map.md` |
+| Format flow | warning, confirmation and progress dialogs; the volume is opened for writing, partition table, FAT16 boot sector and first FAT sector are written on a scratch image; a Wine stub then stops the flow, so the model-specific management writes are unobserved | `destructive-operations.md` |
+| ログデータ変換 (KML) | format measured; Mac output compared with the original's on the sample card; differences listed | `kml-export.md` |
+| Original-menu inventory | all 150 menu items classified by state and handler | `menu-inventory.md` |
+
+Lesson recorded from run #109: the GUI check failed because a test assumed the first row of the made-up journal starts at its first record; the original's lagging-clock rule starts it one second earlier, so the expected default file name was corrected (evidence: the reference model and the original's rule; no check was weakened).
 
 ## What was *not* established by these runs
 

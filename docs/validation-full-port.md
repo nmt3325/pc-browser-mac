@@ -75,12 +75,15 @@ Exact build-8 native CLI and GUI regression also passed on the same 1,200-frame 
 - `macos-15-intel` (x86_64, macOS 15.7.9, Swift 6.1.2): `swift test --jobs 2` reported 126 tests and zero failures, the release build, ad-hoc signing, ZIP extraction with strict signature check, executable comparison (`lipo -archs` equals `x86_64`) and the packaged-CLI synthetic smoke passed. The downloaded evidence artifact matched GitHub's digest; `build-metadata.json` records 126 tests, 0 failures, architecture `x86_64`, minimum macOS 14.0.
 - Scope: unit tests and generated synthetic headers only. No Intel GUI, real media, physical SD or exact-artifact runtime on an Intel Mac. The Intel package is evidence only and is not a distributed build.
 
+## Build 14 — run #111 (CI only; not run on a Mac)
+
+- Commit `54c1c7f3661dd5e0143e9231baf305d2c059f75d`, [Actions run #111](https://github.com/nmt3325/pc-browser-mac/actions/runs/43570139966): 347 tests, 0 failures; the signed app was built, the extracted package was verified and the GUI check passed (report `passed: true`, including the ログデータ変換 dialog with a made-up journal).
+- Artifact `PC-Browser-Mac-arm64-111`, zip digest SHA-256 `5f840c513393dd3d485710e0838f6fe06d618a72c5bc4b8bdb99a32c349090c2`.
+- Added since build 13 (run #82): the legacy menu bar and 150-item inventory, the 37-model table and automatic model detection, the Q-01 settings editor on copies, event/continuous/history lists, report window/page/CSV, trigger list, history report, journal KML, and the destructive-operation guard. Their evidence is CI plus the original-application comparisons in `validation-history.md`.
+- **No Mac run:** the verification Macs were unreachable after build 13. The exact-artifact checks on a Mac (checksum, commit, signature, real-data lists, reports and KML against the original's files) are pending.
+
 ## Explicit remaining gaps
 
-- Full-card real H.264/audio playback and long-duration exports; physical SD insertion, helper privileges, destination-full and physical printers.
-- Original Windows BAK interoperability (the genuine application lists no recordings from the manual partial files), splits, writer, restore, model/FW settings schema/encoding, password algorithms, erase/format and firmware update.
-- Original factory optical calibration, VR-pn/NIGHT pixel equivalence, sensor physical-unit/axis calibration, event/input semantics and multi-camera synchronization.
-- Weekly standby schedule, person-detection warnings/output, connection-ID/Wi-Fi features and original automatic event reports.
-- Intel GUI/real-media runtime, macOS 14 actual run (hosted `macos-14` job cancelled before any step), Developer ID signing and Apple notarization. Intel CI unit tests and the synthetic CLI smoke pass (compatibility run 1).
+See `validation-gaps.md` for the maintained list. In short: Mac runs of the builds after 13; physical SD, camera, printer and Intel/macOS 14 GUI; original factory calibration and pixel equivalence of 360°/NIGHT; multi-camera synchronisation; gyro units and external-input meaning; settings of the five other dialog classes; password, delete, initialise, format and firmware update (guarded, never executed); PC Viewer backups and restoring to a card; Google Earth's display of the KML; Developer ID signing and notarization.
 
 Private image/media/GPS fixtures and original proprietary binaries remain outside Git and CI. Header-only sparse IMG catalog validation does not demonstrate complete video payload reception.

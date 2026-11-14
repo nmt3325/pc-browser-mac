@@ -70,3 +70,15 @@ Cross-check against the writer: the routine that emits the `set.ini` text lives 
 
 These anchors direct future work but are **not** a proven settings schema. The Mac app must not write `set.ini` or any card file until key semantics, value encodings and device behavior are verified on a copied image.
 
+
+## Follow-up (runs 64–111): what the later work established
+
+The static anchors above were followed up with the original running under Wine on scratch copies (see `validation-history.md`). What that changed:
+
+- The Q-01 class keeps its recording settings in **raw sectors next to the control sector**, not in `SET.INI`; the card's `CONFIG` folder holds only the instruction files the original creates (`TIME.INI`, `SELFADJ.INI`) and `VERSION.INI`. The `set.ini` key list from the static analysis therefore does not describe the Q-01 storage (`settings-format.md`).
+- The model code is one byte of the control sector; the original's list has 37 models and six settings-dialog classes (`settings-format.md`, `dialog-port-map.md`).
+- All 150 menu items were classified by handler and state (`menu-inventory.md`); the 37 application dialogs are mapped in `dialog-port-map.md`.
+- Event/continuous/history lists, report files, the trigger list, the history report and the journal KML were compared with the original's output (`report-format.md`, `history-report.md`, `kml-export.md`).
+- The format flow was observed up to the first FAT sector on a scratch image (`destructive-operations.md`). Password storage, delete rules, initialisation and firmware update are still not recovered.
+
+The rule "never write a card file whose encoding was not proven on a copied image" stands; the Mac app writes only the fields documented in `settings-format.md`, and only to a new copy.
