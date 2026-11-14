@@ -24,6 +24,8 @@ import PCBrowserCore
     @Published var sourceName="未選択"
     @Published var cardNotice=""
     @Published var errorMessage:String?
+    /// Shown in the preview when the selected frame has no video bytes (not an error: the recording keeps its clock, GPS and sensors).
+    @Published var videoNotice:String?
     @Published var playbackFPS=30.0
     @Published var playbackRate=1.0 {didSet {if oldValue != playbackRate {pause()}}}
     @Published var reverse=false
@@ -244,7 +246,7 @@ import PCBrowserCore
         index=nil;selectedID=nil;source=nil;sourceURL=nil;scanLimit=nil;image=nil;displayedFrame=nil;rawFrame=nil
         audioPlayer=nil;audioClip=nil;renderer=nil;timeline=RecordingTimeline(packets:[])
         frameIndex=0;scrubber=0;scanning=false;busy=false;progress=0;selectionLoading=false;rendering=false
-        selectedExports=[];cardFiles=[];rawQueryResults=[:];route=[];sensors=[];errorMessage=nil
+        selectedExports=[];cardFiles=[];rawQueryResults=[:];route=[];sensors=[];errorMessage=nil;videoNotice=nil
         eventEntries=[];historyLog=nil;selectedJournalRows=[];historyStatus="";historyLoading=false;pendingLogConversion=false;showLogConversion=false;listKind = .continuous
         useExternalGPS=false;externalGPSTrack=nil;externalGPSStatus="外部ログ未選択";deviceTimeZoneID="";gpsLogOffset=0
         archiveNotice="";cardNotice="";audioStatus="音声なし";audioDuration=0;audioDrift=0;sourceName="未選択"
@@ -276,7 +278,7 @@ import PCBrowserCore
     private func load(_ source:any ByteSource,name:String,limit:UInt64?=nil,recovery:Bool=false) {
         if !recovery,!passwordAccepted(for:source) {closeData();status="パスワードが確認できなかったため、カードを読み込みませんでした";return}
         cancel();generation=UUID();let token=generation,flag=ScanCancellation(),began=ProcessInfo.processInfo.systemUptime;cancellation=flag
-        self.source=source;scanLimit=limit;index=nil;selectedID=nil;image=nil;sourceName=name;progress=0;scanning=true;busy=false;errorMessage=nil;selectedExports=[];cardFiles=[];rawQueryResults=[:]
+        self.source=source;scanLimit=limit;index=nil;selectedID=nil;image=nil;sourceName=name;progress=0;scanning=true;busy=false;errorMessage=nil;videoNotice=nil;selectedExports=[];cardFiles=[];rawQueryResults=[:]
         eventEntries=[];historyLog=nil;selectedJournalRows=[];historyStatus="";historyLoading=false;pendingLogConversion=false;showLogConversion=false;listKind = .continuous
         useExternalGPS=false;externalGPSTrack=nil;externalGPSStatus="外部ログ未選択";deviceTimeZoneID="";gpsLogOffset=0
         firstListSeconds=0;catalogSeconds=0;detailSeconds=0;archiveNotice=(source as? ArchiveSource)?.isHashVerified == false ? "バックアップSHA-256: 未照合（一覧表示後に照合）":(source is WindowsBackupSource || source is WindowsBackupSet ? "Windows BAK\((source as? WindowsBackupSet).map{"（\($0.parts.count)ファイル）"} ?? ""): 部分コピー・読み取り専用（元形式にSHA-256照合なし）":"")
@@ -353,7 +355,7 @@ import PCBrowserCore
     }
     private func prepareSelection() {
         pause();audioTask?.cancel();selectionCancellation.cancel();selectionGeneration=UUID();let token=selectionGeneration,flag=ScanCancellation();selectionCancellation=flag
-        triggerTypeSelection=nil;image=nil;displayedFrame=nil;rawFrame=nil;audioPlayer=nil;audioClip=nil;audioStatus="音声を読み取っています…";audioDuration=0;audioDrift=0;frameIndex=0;scrubber=0;rendering=false;selectionLoading=false;renderer=nil;timeline=RecordingTimeline(packets:[]);route=[];sensors=[]
+        triggerTypeSelection=nil;image=nil;videoNotice=nil;displayedFrame=nil;rawFrame=nil;audioPlayer=nil;audioClip=nil;audioStatus="音声を読み取っています…";audioDuration=0;audioDrift=0;frameIndex=0;scrubber=0;rendering=false;selectionLoading=false;renderer=nil;timeline=RecordingTimeline(packets:[]);route=[];sensors=[]
         guard let summary=selectedSummary,let source,!scanning else{return}
         if summary.isLoaded {installSelection(summary,source:source,token:token,flag:flag);return}
         selectionLoading=true;let began=ProcessInfo.processInfo.systemUptime
@@ -398,8 +400,11 @@ import PCBrowserCore
             let raw=try await renderer.render(position),settings=projection
             let frame=try await displayPicture(raw,position:position,settings:settings,renderer:renderer)
             guard selectionGeneration==selection,request==renderRequest,!Task.isCancelled else{return}
-            projectionTask?.cancel();rawGeneration=UUID();rawFrame=raw;displayedFrame=frame;image=NSImage(cgImage:frame,size:NSSize(width:frame.width,height:frame.height));frameIndex=position;scrubber=Double(position)
+            projectionTask?.cancel();rawGeneration=UUID();rawFrame=raw;displayedFrame=frame;image=NSImage(cgImage:frame,size:NSSize(width:frame.width,height:frame.height));videoNotice=nil;frameIndex=position;scrubber=Double(position)
             if settings != projection {reproject()}
+        }catch let unavailable as VideoUnavailableError{
+            // No video bytes at this position: say so in the preview, keep the position and let the timeline, map and sensors go on.
+            if selectionGeneration==selection,request==renderRequest,!Task.isCancelled{projectionTask?.cancel();rawGeneration=UUID();rawFrame=nil;displayedFrame=nil;image=nil;videoNotice=unavailable.localizedDescription;frameIndex=position;scrubber=Double(position)}
         }catch{if selectionGeneration==selection,request==renderRequest,!Task.isCancelled{pause();errorMessage=error.localizedDescription}}
         if request==renderRequest{rendering=false}
     }
