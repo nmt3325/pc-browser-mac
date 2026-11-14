@@ -32,6 +32,35 @@ public enum WriteGuard {
         return .allowed
     }
 
+    /// The policy for an output folder that an export may still have to create: never a device, never an input or inside one.
+    /// Nothing is created here.
+    public static func checkOutputFolder(_ folder: URL, protecting sources: [URL] = []) -> Decision {
+        guard folder.isFileURL else { return .refused("書き出し先はローカルのフォルダーを指定してください") }
+        let standard = folder.standardizedFileURL
+        guard !standard.path.isEmpty, standard.path != "/" else { return .refused("書き出し先が不正です") }
+        if isDevicePath(standard.path) { return .refused("デバイスファイルへは書き出しません（SDカード・ディスクを保護しています）") }
+        let fm = FileManager.default
+        var existing = standard
+        var missing: [String] = []
+        while !fm.fileExists(atPath: existing.path), existing.path != "/" {
+            missing.insert(existing.lastPathComponent, at: 0)
+            existing.deleteLastPathComponent()
+        }
+        var isDirectory: ObjCBool = false
+        guard fm.fileExists(atPath: existing.path, isDirectory: &isDirectory), isDirectory.boolValue else { return .refused("保存先のフォルダーを作成できません（途中にファイルがあります）") }
+        var resolved = existing.resolvingSymlinksInPath()
+        for part in missing { resolved.appendPathComponent(part) }
+        let resolvedPath = resolved.standardizedFileURL.path
+        if isDevicePath(resolvedPath) { return .refused("デバイスファイルへは書き出しません（SDカード・ディスクを保護しています）") }
+        for source in sources {
+            let protected = source.resolvingSymlinksInPath().standardizedFileURL.path
+            if resolvedPath == protected || resolvedPath.hasPrefix(protected.hasSuffix("/") ? protected : protected + "/") {
+                return .refused("入力元（読み取り専用）と同じ場所、または入力元の内部には書き出せません")
+            }
+        }
+        return .allowed
+    }
+
     private static func isDevicePath(_ path: String) -> Bool { path == "/dev" || path.hasPrefix("/dev/") }
 }
 
