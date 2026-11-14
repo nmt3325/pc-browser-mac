@@ -194,7 +194,9 @@ final class ScanCancellation: @unchecked Sendable {
         // ログデータ変換 from the made-up journal: the dialog and the file it would write (nothing is written to disk here).
         guard let journal=HistoryReportPage.syntheticLog(),let journalKML=JournalKML(log:journal) else{throw BrowserError.io("ログデータ変換の試験データを作成できません")}
         let kmlData=try journalKML.data()
-        guard Array(kmlData.prefix(3)) == [0xEF,0xBB,0xBF],String(decoding:kmlData.dropFirst(3),as:UTF8.self).hasSuffix("</kml>\r\n"),journalKML.defaultFileName.hasPrefix("YP_20261111_09") else{throw BrowserError.io("ログデータ変換のKMLを検証できません")}
+        guard Array(kmlData.prefix(3)) == [0xEF,0xBB,0xBF] else{throw BrowserError.io("ログデータ変換のKMLを検証できません(先頭 \(Array(kmlData.prefix(3))))")}
+        guard kmlData.suffix(8) == Data("</kml>\r\n".utf8) else{throw BrowserError.io("ログデータ変換のKMLを検証できません(末尾 \(Array(kmlData.suffix(8))))")}
+        guard journalKML.defaultFileName.hasPrefix("YP_20261111_09") else{throw BrowserError.io("ログデータ変換のKMLを検証できません(名前 \(journalKML.defaultFileName))")}
         let previousLog=model.historyLog;model.historyLog=journal;model.showLogConversion=true
         for _ in 0..<30{if window?.attachedSheet != nil{break};try await Task.sleep(nanoseconds:100_000_000)}
         try await Task.sleep(nanoseconds:1_000_000_000)
