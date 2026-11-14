@@ -241,7 +241,10 @@ enum HistoryReportPage {
     // MARK: Synthetic content (GUI self-check and visual evidence; contains no card data)
 
     /// A made-up journal: three drives written into a 900-slot ring that wraps, one with a shock, one without any fix.
-    static func syntheticReport() -> LegacyHistoryReport? {
+    static func syntheticReport() -> LegacyHistoryReport? { syntheticLog().flatMap { LegacyHistoryReport(log: $0) } }
+
+    /// The journal behind `syntheticReport()`.
+    static func syntheticLog() -> HistoryLog? {
         func clock(_ t: Int64) -> [UInt8] {
             let c = CivilTime.components(t)
             return [UInt8(c.year - 2000), UInt8(c.month), UInt8(c.day), UInt8(c.hour), UInt8(c.minute), UInt8(c.second)]
@@ -276,7 +279,6 @@ enum HistoryReportPage {
         }
         var image = Data()
         for s in slots { image.append(s) }
-        guard let log = try? HistoryLog.read(source: MemorySource(image), area: 0..<450) else { return nil }
-        return LegacyHistoryReport(log: log)
+        return try? HistoryLog.read(source: MemorySource(image), area: 0..<450)
     }
 }

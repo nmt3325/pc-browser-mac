@@ -29,7 +29,7 @@ enum ReportFiles {
     static func refusal(history report: LegacyHistoryReport, folder: URL, protecting sources: [URL]) -> String? {
         refusal(names: [report.summaryFileName, report.dataFileName], folder: folder, protecting: sources)
     }
-    private static func refusal(names: [String], folder: URL, protecting sources: [URL]) -> String? {
+    static func refusal(names: [String], folder: URL, protecting sources: [URL]) -> String? {
         if case .refused(let reason) = WriteGuard.checkOutputFolder(folder, protecting: sources) { return reason }
         if isRemovableVolume(folder) { return "取り外し可能なメディア（SDカードなど）へは書き出しません。Macの内蔵ディスク上のフォルダーを選んでください" }
         for name in names where (try? FileManager.default.attributesOfItem(atPath: folder.appendingPathComponent(name).path)) != nil {

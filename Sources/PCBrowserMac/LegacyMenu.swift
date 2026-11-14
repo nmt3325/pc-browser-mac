@@ -143,6 +143,8 @@ import PCBrowserCore
         if let kind = ViewCommands.kind(commandID: id), kind != .closeWindow { return model.image != nil }
         if (555...559).contains(id) { return model.image != nil }
         if id == 377, model.listKind == .history { return model.historyLog != nil && !model.busy && !model.scanning }
+        // ログ変換 works without a loaded recording: it converts the journal of the opened input.
+        if id == 374 { return model.source != nil && !model.busy && !model.scanning }
         if Self.recordingCommands.contains(id) { return model.recording != nil && !model.busy && !model.scanning }
         switch id {
         case 307: return model.source != nil || model.index != nil
@@ -182,7 +184,7 @@ import PCBrowserCore
         case 371: model.showRecordingSettings = true
         case 372: model.exportMovie()
         case 373: model.exportStill()
-        case 374: model.exportLog("csv")
+        case 374: model.openLogConversion()
         case 375: model.backup()
         case 377: if model.listKind == .history { model.openHistoryReport() } else { model.showReport = true }
         case 390: showAbout()
