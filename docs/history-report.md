@@ -151,5 +151,6 @@ formats, selection, cancel and file encoding. Neither test uses any data from a 
   event side.
 * The original's list prints rows in its own order; the Mac list is sorted by start time (documented in
   `validation-history.md`).
-* Running the report on a Mac artifact against the original's CSV files could not be repeated for the latest build because no
-  Mac was reachable (see `validation-gaps.md`).
+* The Mac artifact of run #128 wrote summary and data CSVs for the sample card on a Mac that are byte-identical to the independent
+  reference model on the same image; the comparison with the original's own files was made on the Linux machine
+  (see `validation-full-port.md` and `validation-gaps.md`).

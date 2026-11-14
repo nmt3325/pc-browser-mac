@@ -57,7 +57,7 @@ The byte-level layout and the Mac encoder/decoder are documented in `settings-fo
 
 ## Runs 64 to 111 (aggregate)
 
-Everything below was compared on the Linux machine that runs the original (Wine), against the output of CI builds and of the independent reference scripts in `tools/`. No Mac was reachable for these runs; the build-14 artifact (run #111) has therefore not been started on a Mac (`validation-gaps.md`).
+Everything below was compared on the Linux machine that runs the original (Wine), against the output of CI builds and of the independent reference scripts in `tools/`. No Mac was reachable while these comparisons were made; the build-14 artifact was later verified on a Mac (run #128, `validation-full-port.md`; remaining Mac gaps in `validation-gaps.md`).
 
 | Topic | Evidence | Where documented |
 |---|---|---|
