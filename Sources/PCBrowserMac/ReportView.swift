@@ -15,7 +15,7 @@ import PCBrowserCore
 
     static let figureWidth: CGFloat = 470
     static let graphHeight: CGFloat = 128
-    static let graphRect = CGRect(x: 36, y: 8, width: 420, height: 98)
+    static let graphRect = CGRect(x: 36, y: 8, width: 404, height: 98)
 
     func load(model: BrowserModel) async {
         guard let recording = model.recording else { failure = "レポートには読み込み済みの録画が必要です"; return }

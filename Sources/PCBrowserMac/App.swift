@@ -176,6 +176,21 @@ final class ScanCancellation: @unchecked Sendable {
             pages[kind.rawValue]=["pdf_bytes":data.count,"png_bytes":png.count]
         }
         result["legacy_report_pages"]=pages
+        // The history report from a made-up journal: list dialog, printed pages and CSV pair.
+        guard let history=HistoryReportPage.syntheticReport() else{throw BrowserError.io("履歴記録レポートの試験データを作成できません")}
+        let historyPDF=try HistoryReportPage.pdf(history)
+        guard let historyDocument=PDFDocument(data:historyPDF),historyDocument.pageCount == HistoryReportPage.pageCount(history),let historyFirst=historyDocument.page(at:0),abs(historyFirst.bounds(for:.mediaBox).width-842)<1 else{throw BrowserError.io("履歴記録レポートPDFを検証できません")}
+        guard let historyPage=HistoryReportPage.image(history,page:0),let historyPNG=LegacyReportPage.png(historyPage) else{throw BrowserError.io("履歴記録レポートページを描画できません")}
+        try historyPNG.write(to:folder.appendingPathComponent("history-report-page.png"))
+        let historySummary=try history.summaryCSVData(),historyData=try history.dataCSV()
+        guard history.rowCount == 3,history.dataLineCount > 0,!historySummary.isEmpty,historyData.count > historySummary.count else{throw BrowserError.io("履歴記録レポートのCSVを作成できません")}
+        model.historyReportOverride=history;model.showHistoryReport=true
+        for _ in 0..<30{if window?.attachedSheet != nil{break};try await Task.sleep(nanoseconds:100_000_000)}
+        try await Task.sleep(nanoseconds:1_500_000_000)
+        guard let historyView=window?.attachedSheet?.contentView else{throw BrowserError.io("履歴記録レポートを表示できません")}
+        try captureOwnView(historyView,to:folder.appendingPathComponent("history-report.png"))
+        model.showHistoryReport=false;model.historyReportOverride=nil;try await Task.sleep(nanoseconds:300_000_000)
+        result["history_report"]=["rows":history.rowCount,"data_lines":history.dataLineCount,"pdf_pages":historyDocument.pageCount,"summary_bytes":historySummary.count,"data_bytes":historyData.count,"total_row":history.totalCells] as [String:Any]
         if CommandLine.arguments.contains("--ui-check-earth") {
             var style=TrackStyle();style.showPoints=true;style.lineRGB="12A4E0";style.pointRGB="E06012";style.alpha=173;style.width=7;style.density=17
             let kml=folder.appendingPathComponent("explicit-earth-\(UUID().uuidString).kml")
