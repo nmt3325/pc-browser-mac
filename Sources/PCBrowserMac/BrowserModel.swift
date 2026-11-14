@@ -118,6 +118,8 @@ import PCBrowserCore
     private var scanLimit:UInt64?
     private var generation=UUID(),selectionGeneration=UUID(),playGeneration=UUID(),rawGeneration=UUID(),renderRequest=0
     private var playTask:Task<Void,Never>?,audioTask:Task<Void,Never>?,projectionTask:Task<Void,Never>?
+    /// How long showing a frame takes while playing (moving average); the play loop asks for the frame due by then.
+    private var showLatency=PlaybackLatency()
     private var notifications:[NSObjectProtocol]=[]
     private var bookmarkKey="pcbrowser.bookmarks"
     var selectedSummary:Recording? {index?.recordings.first{$0.id==selectedID}}
@@ -370,7 +372,7 @@ import PCBrowserCore
     }
     private func installSelection(_ r:Recording,source:any ByteSource,token:UUID,flag:ScanCancellation) {
         if rawQuery.hasConditions {rawQueryResults[r.id]=r.packets.contains(where:rawQuery.matches)}
-        renderer=FrameRenderer(source:source,packets:r.packets);historyComposer=FrameHistoryComposer();timeline=RecordingTimeline(packets:r.packets);playbackFPS=timeline.nominalFPS
+        renderer=FrameRenderer(source:source,packets:r.packets);showLatency=PlaybackLatency();historyComposer=FrameHistoryComposer();timeline=RecordingTimeline(packets:r.packets);playbackFPS=timeline.nominalFPS
         inFrame=0;outFrame=max(0,r.packets.count-1);useRange=false;updateRoute();sensors=SensorSample.make(r,timeline:timeline)
         let first=r.packets.firstIndex(where:{$0.isIntra}) ?? 0;Task{await renderFrame(first)}
         audioTask=Task {
@@ -395,16 +397,26 @@ import PCBrowserCore
     }
     /// How long showing a frame took (decode, picture conversion, projection) since the last reset. The GUI check reports it next to the
     /// audio/video clock difference, so a slow machine can be told from a playback fault.
-    private(set) var renderCount=0,renderSecondsTotal=0.0,renderSecondsMax=0.0
-    func resetRenderStatistics(){renderCount=0;renderSecondsTotal=0;renderSecondsMax=0}
+    private(set) var renderCount=0,renderSecondsTotal=0.0,renderSecondsMax=0.0,projectSecondsTotal=0.0
+    func resetRenderStatistics() async {renderCount=0;renderSecondsTotal=0;renderSecondsMax=0;projectSecondsTotal=0;await renderer?.resetTiming()}
+    /// Means in milliseconds for the frames shown since `resetRenderStatistics()`: decoding and picture conversion (video decoder), the
+    /// projection step, and the whole time from request to the new picture (which also holds any wait for the main thread).
+    func renderTiming() async -> [String:Double] {
+        guard let timing=await renderer?.timing else{return [:]}
+        func mean(_ total:Double,_ count:Int)->Double{count>0 ? total/Double(count)*1000:0}
+        return ["playback_decode_mean_ms":mean(timing.decodeSeconds,timing.decodedFrames),"playback_decoded_frames":Double(timing.decodedFrames),
+                "playback_convert_mean_ms":mean(timing.convertSeconds,timing.convertedFrames),"playback_converted_frames":Double(timing.convertedFrames),
+                "playback_project_mean_ms":mean(projectSecondsTotal,renderCount)]
+    }
     func renderFrame(_ position:Int) async {
         guard let renderer,let r=recording,r.packets.indices.contains(position) else{return}
         renderRequest+=1;let request=renderRequest,selection=selectionGeneration,began=ProcessInfo.processInfo.systemUptime;rendering=true
         do {
             let raw=try await renderer.render(position),settings=projection
+            let projecting=ProcessInfo.processInfo.systemUptime
             let frame=try await displayPicture(raw,position:position,settings:settings,renderer:renderer)
             guard selectionGeneration==selection,request==renderRequest,!Task.isCancelled else{return}
-            let took=ProcessInfo.processInfo.systemUptime-began;renderCount+=1;renderSecondsTotal+=took;renderSecondsMax=max(renderSecondsMax,took)
+            let finished=ProcessInfo.processInfo.systemUptime,took=finished-began;renderCount+=1;renderSecondsTotal+=took;renderSecondsMax=max(renderSecondsMax,took);projectSecondsTotal+=finished-projecting
             projectionTask?.cancel();rawGeneration=UUID();rawFrame=raw;displayedFrame=frame;image=NSImage(cgImage:frame,size:NSSize(width:frame.width,height:frame.height));videoNotice=nil;frameIndex=position;scrubber=Double(position)
             if settings != projection {reproject()}
         }catch let unavailable as VideoUnavailableError{
@@ -450,8 +462,14 @@ import PCBrowserCore
                 }
                 let position=soundClock ? (audioPlayer?.currentTime ?? base):base+elapsed*rate*direction
                 if (!reverse && position>=timeline.duration) || (reverse && position<=0){break}
-                let target=timeline.frame(at:position)
-                if target != frameIndex {await renderFrame(target)}else{try? await Task.sleep(nanoseconds:5_000_000)}
+                // A picture needs some time to reach the screen: ask for the frame that is due by then, so the picture is in step with
+                // the sound when it appears instead of late by that time (see `PlaybackLatency`).
+                let target=timeline.frame(at:position+direction*showLatency.lead(rate:rate))
+                if target != frameIndex {
+                    let asked=ProcessInfo.processInfo.systemUptime
+                    await renderFrame(target)
+                    if frameIndex==target {showLatency.record(ProcessInfo.processInfo.systemUptime-asked)}
+                }else{try? await Task.sleep(nanoseconds:5_000_000)}
 
             }
             if selectionGeneration==selection,playGeneration==playToken {playing=false;audioPlayer?.pause()}
