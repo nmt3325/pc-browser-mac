@@ -123,6 +123,7 @@ import PCBrowserCore
         let id = menuItem.tag
         switch id {
         case 304: menuItem.state = model.fileListVisible ? .on : .off
+        case 301, 302, 303: menuItem.state = RecordListKind(commandID: id) == model.listKind ? .on : .off
         case 330...333: menuItem.state = model.sensorScale.commandID == id ? .on : .off
         case 340...344: menuItem.state = Self.singleScreenModes[id] == model.projection.mode ? .on : .off
         case 311: menuItem.state = model.projection.mode == .grid16 ? .on : .off
@@ -155,7 +156,9 @@ import PCBrowserCore
     func dispatch(_ id: Int) {
         switch id {
         case 300: model.openPanel()
-        case 301, 302, 303, 312, 313, 345, 370, 381: explain(id)
+        case 301, 302, 303:
+            if let kind = RecordListKind(commandID: id) { model.fileListVisible = true; model.listKind = kind }
+        case 312, 313, 345, 370, 381: explain(id)
         case 304: model.fileListVisible.toggle()
         case 305: model.printFrame()
         case 306: NSApp.terminate(nil)

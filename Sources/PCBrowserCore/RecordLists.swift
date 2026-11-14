@@ -16,6 +16,26 @@ public enum RecordListKind: String, CaseIterable, Sendable, Identifiable {
     }
 }
 
+extension RecordListKind {
+    /// The original's File ▸ 読み込み commands: イベント記録 (301), 常時録画 (302) and 履歴記録 (303). Each one loads one of the three lists;
+    /// this port reads all three from the same input, so the command selects the list instead.
+    public init?(commandID: Int) {
+        switch commandID {
+        case 301: self = .event
+        case 302: self = .normal
+        case 303: self = .history
+        default: return nil
+        }
+    }
+    public var commandID: Int {
+        switch self {
+        case .event: return 301
+        case .normal: return 302
+        case .history: return 303
+        }
+    }
+}
+
 /// Header byte 0x0C of a D103/D105 record: the stream phase of an event block.
 public enum EventBlockType {
     public static let preRoll: UInt8 = 5

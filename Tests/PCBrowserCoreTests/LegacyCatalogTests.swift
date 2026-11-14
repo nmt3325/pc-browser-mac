@@ -103,10 +103,23 @@ final class LegacyCatalogTests: XCTestCase {
         }
     }
     func testBlockedAndPolicyItemsAreNeverPresentedAsPorted() {
-        for id in [301, 302, 303, 312, 313, 381] { XCTAssertEqual(LegacyMenuInventory.command(id: id)?.status, .blocked, "\(id)") }
+        for id in [312, 313, 381] { XCTAssertEqual(LegacyMenuInventory.command(id: id)?.status, .blocked, "\(id)") }
         XCTAssertEqual(LegacyMenuInventory.command(id: 370)?.status, .refusedByPolicy)
         XCTAssertEqual(LegacyMenuInventory.command(id: 1071)?.status, .noHandler)
         XCTAssertEqual(LegacyMenuInventory.commands(in: "未使用アクセラレーター").count, 13)
+    }
+    /// 301-303 were "blocked" while the three lists were unknown. They are now read from the region table, so the commands select a list
+    /// and the inventory describes them as partially ported (verified on one card, other models unverified).
+    func testLoadCommandsSelectTheThreeRecordLists() {
+        XCTAssertEqual(RecordListKind(commandID: 301), .event)
+        XCTAssertEqual(RecordListKind(commandID: 302), .normal)
+        XCTAssertEqual(RecordListKind(commandID: 303), .history)
+        XCTAssertNil(RecordListKind(commandID: 300)); XCTAssertNil(RecordListKind(commandID: 304))
+        for kind in RecordListKind.allCases {
+            XCTAssertEqual(RecordListKind(commandID: kind.commandID), kind)
+            XCTAssertEqual(LegacyMenuInventory.command(id: kind.commandID)?.label, kind.title)
+            XCTAssertEqual(LegacyMenuInventory.command(id: kind.commandID)?.status, .partial)
+        }
     }
     func testSummaryIsConsistentJSON() throws {
         let summary = LegacyMenuInventory.summary()
