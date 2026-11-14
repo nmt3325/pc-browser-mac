@@ -211,7 +211,7 @@ import PCBrowserCore
         }
     }
     init() {
-        if let d=UserDefaults.standard.data(forKey:"pcbrowser.projection"),let p=try? JSONDecoder().decode(ProjectionSettings.self,from:d){projection=p.clamped;if projection.mode == .frameHistory{projection.mode=.perspective}}
+        if let d=UserDefaults.standard.data(forKey:"pcbrowser.projection"),let p=try? JSONDecoder().decode(ProjectionSettings.self,from:d){projection=p.clamped;if projection.mode == .frameHistory{projection.mode = .perspective}}
         if let s=UserDefaults.standard.string(forKey:"pcbrowser.gpsdatum"),let d=GPSDatum(rawValue:s){datum=d}
         let defaults=UserDefaults.standard
         if let model=LegacyModelCatalog.model(commandID:defaults.integer(forKey:"pcbrowser.legacyModel")){legacyModelID=model.commandID}
