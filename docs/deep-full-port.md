@@ -79,6 +79,6 @@ The static anchors above were followed up with the original running under Wine o
 - The model code is one byte of the control sector; the original's list has 37 models and six settings-dialog classes (`settings-format.md`, `dialog-port-map.md`).
 - All 150 menu items were classified by handler and state (`menu-inventory.md`); the 37 application dialogs are mapped in `dialog-port-map.md`.
 - Event/continuous/history lists, report files, the trigger list, the history report and the journal KML were compared with the original's output (`report-format.md`, `history-report.md`, `kml-export.md`).
-- The format flow was observed up to the first FAT sector on a scratch image (`destructive-operations.md`). Password storage, delete rules, initialisation and firmware update are still not recovered.
+- The format flow was observed up to the first FAT sector on a scratch image (`destructive-operations.md`). Password storage and the delete / initialise writes were later recovered from the original's own writes on scratch copies (`settings-format.md`, `recording-data-operations.md`); the reader rule of delete at card generation 2 and above, the model-specific part of the format flow and firmware update are still not recovered.
 
 The rule "never write a card file whose encoding was not proven on a copied image" stands; the Mac app writes only the fields documented in `settings-format.md`, and only to a new copy.

@@ -279,6 +279,7 @@ final class ScanCancellation: @unchecked Sendable {
         if CommandLine.arguments.contains("--settings-show") { exit(SettingsCLI.show(CommandLine.arguments)) }
         if CommandLine.arguments.contains("--settings-apply") { exit(SettingsCLI.run(CommandLine.arguments)) }
         if CommandLine.arguments.contains("--password-check") { exit(SettingsCLI.passwordCheck(CommandLine.arguments)) }
+        if CommandLine.arguments.contains("--erase-recordings") { exit(SettingsCLI.erase(CommandLine.arguments)) }
         runApplication()
     }
     @MainActor static func runApplication() {
