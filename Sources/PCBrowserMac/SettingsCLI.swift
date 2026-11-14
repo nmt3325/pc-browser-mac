@@ -116,8 +116,8 @@ enum SettingsCLI {
         if RecordingSettingsTables.historyHours.indices.contains(s.historyHoursIndex) { d["historyHours"] = RecordingSettingsTables.historyHours[s.historyHoursIndex] }
         return d
     }
-    static func describe(_ state: CardCommandState?) -> [String: Any] {
-        guard let s = state else { return ["available": false] }
+    static func describe(_ state: CardCommandState?, source: any ByteSource) -> [String: Any] {
+        guard let s = state else { return ["available": false, "reason": RecordingSettingsStore.commandFilesUnavailableReason(source) ?? "理由不明"] }
         var d: [String: Any] = ["available": true, "timeFileExists": s.timeFileExists, "angleDetectionRequested": s.angleDetectionRequested]
         if let t = s.time { d["time"] = t.text }
         return d
@@ -157,7 +157,7 @@ enum SettingsCLI {
             var payload: [String: Any] = [
                 "settings": describe(state.snapshot.settings), "regionsAreStandard": state.snapshot.regionsAreStandard,
                 "generation": Int(state.snapshot.generation), "backupControlMatches": state.backupControlMatches,
-                "backupChannelMatches": state.backupChannelMatches, "commandFiles": describe(RecordingSettingsStore.readCommandState(source))]
+                "backupChannelMatches": state.backupChannelMatches, "commandFiles": describe(RecordingSettingsStore.readCommandState(source), source: source)]
             payload["locationSectors"] = [state.location.control, state.location.channel, state.location.backupControl, state.location.backupChannel]
             let s = state.snapshot.settings
             print("mode=\(modeName(s.mode)) fps=\(s.frameRateIndex) event=\(s.eventWindowIndex) audio=\(s.audioEnabled) history=\(s.historyHoursIndex)/\(s.historyDoubleRate ? "double" : "normal") id=\(s.cardID)")
@@ -177,14 +177,14 @@ enum SettingsCLI {
             let commandState = RecordingSettingsStore.readCommandState(source)
             var actions: [CardCommandFile] = []
             if request.time != .keep || request.angle != .keep {
-                guard let current = commandState else { throw Failure(message: "このイメージのFAT16設定領域（CONFIGフォルダー）を読めないため、日時・角度検出の指定はできません") }
+                guard let current = commandState else { throw Failure(message: "このイメージのFAT16設定領域（CONFIGフォルダー）を読めないため、日時・角度検出の指定はできません（\(RecordingSettingsStore.commandFilesUnavailableReason(source) ?? "理由不明")）") }
                 actions = CardCommandFile.actions(from: current, time: request.time, angle: request.angle)
             }
             let plan = try RecordingSettingsStore.plan(source, new: request.settings)
             var payload: [String: Any] = [
                 "input": input.lastPathComponent, "before": describe(plan.before), "after": describe(plan.after), "changes": plan.changes,
                 "layoutChanged": plan.layoutChanged, "regionsAreStandard": state.snapshot.regionsAreStandard, "generationBefore": Int(state.snapshot.generation),
-                "changesSectors": plan.changesAnything, "patches": describe(plan.patches), "commandState": describe(commandState), "commandActions": describe(actions)]
+                "changesSectors": plan.changesAnything, "patches": describe(plan.patches), "commandState": describe(commandState, source: source), "commandActions": describe(actions)]
             if let planPath = InspectionCLI.value("--plan-only", in: args) {
                 try write(payload, to: planPath)
                 print(plan.changesAnything || !actions.isEmpty ? "plan written" : "nothing to change")

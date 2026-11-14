@@ -64,6 +64,10 @@ public enum RecordingSettingsStore {
 
     /// State of CONFIG\TIME.INI and CONFIG\SELFADJ.INI, or nil when the image has no FAT16 volume with a CONFIG folder that this reader understands.
     public static func readCommandState(_ source: any ByteSource) -> CardCommandState? { try? CardCommandFiles.read(source) }
+    /// Why the command files cannot be handled on this image (nil when they can).
+    public static func commandFilesUnavailableReason(_ source: any ByteSource) -> String? {
+        do { _ = try CardCommandFiles.read(source); return nil } catch { return error.localizedDescription }
+    }
 
     /// Computes the four sectors the original would write, without writing anything.
     public static func plan(_ source: any ByteSource, new settings: RecordingSettings) throws -> RecordingSettingsPlan {
