@@ -112,7 +112,7 @@ final class LegacyCatalogTests: XCTestCase {
     /// and the inventory describes them as partially ported (verified on one card, other models unverified).
     func testLoadCommandsSelectTheThreeRecordLists() {
         XCTAssertEqual(RecordListKind(commandID: 301), .event)
-        XCTAssertEqual(RecordListKind(commandID: 302), .normal)
+        XCTAssertEqual(RecordListKind(commandID: 302), .continuous)
         XCTAssertEqual(RecordListKind(commandID: 303), .history)
         XCTAssertNil(RecordListKind(commandID: 300)); XCTAssertNil(RecordListKind(commandID: 304))
         for kind in RecordListKind.allCases {
