@@ -2,7 +2,7 @@
 
 This page separates what the Mac port has been shown to do (see `validation-history.md`, `validation-full-port.md`, `validation-bak.md`, `history-report.md`, `kml-export.md`) from what has **not** been verified. Nothing on this page may be read as "works"; each row names the missing evidence. A row leaves this page only when the evidence exists and is linked from the validation documents.
 
-Latest CI: run #111, 347 tests, 0 failures, signed app, extracted-package check and GUI check passed. Only build 13 (run #82) was run on a real Mac with real data; builds after it have **not** been run on a Mac (the verification Macs were unreachable), so everything the later builds added is verified by CI (synthetic data, differential tests against independent reference scripts) and by comparisons made on the Linux machine that runs the original application, not on a Mac.
+Latest CI: run #126, 378 tests, 0 failures, signed app, extracted-package check, GUI check and settings smoke (including delete / initialise on copies) passed. Only build 13 (run #82) was run on a real Mac with real data; builds after it have **not** been run on a Mac (the verification Macs were unreachable), so everything the later builds added is verified by CI (synthetic data, differential tests against independent reference scripts) and by comparisons made on the Linux machine that runs the original application, not on a Mac.
 
 ## Hardware and media
 
@@ -14,7 +14,7 @@ Latest CI: run #111, 347 tests, 0 failures, signed app, extracted-package check 
 | Other models than the sample card's model (Q-01) | partly analysed | the model table (37 models, 6 dialog classes) is known; settings storage and dialog controls were observed on the Q-01 class only; the other five classes expose more (or other) controls |
 | Cards from other firmware versions, damaged cards, wrapped circular recordings | not tested | only the sample card and partial backups of it were available |
 | Intel Mac GUI, macOS 14 execution | not tested | unit tests ran on an Intel CI runner (compatibility build, build 10, 126 tests); the GUI has not been exercised on Intel hardware or macOS 14 |
-| Mac run of the latest builds | **not done** | no Mac was reachable after build 13; the run #111 artifact has not been started on a Mac and its list/report/KML output has not been compared on a Mac with the original's files |
+| Mac run of the latest builds | **not done** | no Mac was reachable after build 13; the run #126 artifact has not been started on a Mac and its list/report/KML output has not been compared on a Mac with the original's files |
 
 ## Original-application equivalence
 

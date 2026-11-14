@@ -1,4 +1,4 @@
-# Validation history — runs 22 to 111 (original-application oracle)
+# Validation history — runs 22 to 126 (original-application oracle)
 
 This page records how the Mac port was checked against the **original Windows PC Browser 1.9.60.0** after build 8, and what each check did or did not establish. It never contains private card data: record names, clock values, counters, sector numbers, card or device identifiers and password values stay on the analysis host and the home Mac and are described here only in aggregate.
 
