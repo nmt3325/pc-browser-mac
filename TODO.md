@@ -3,6 +3,7 @@
 Legend: `[x]` verified or explicitly documented; `[ ]` incomplete or blocked (the reason is on the line). Implementation alone is not end-to-end validation. The maintained gap list is `docs/validation-gaps.md`; the original's menu-by-menu state is `docs/menu-inventory.md`.
 
 ## Baseline
+- Build 15 (release `v0.2.0-beta.2`, commit `c8c945fc`) was verified on a Mac from the published assets; it exposed that the sample card's continuous recordings have no video (obscure SPS/PPS alert, GUI check could not finish) and that `SHA256SUMS` listed a file that was not uploaded. Both are fixed in the working tree for the next build (CI pending).
 - CI run #132 (commit `b600745f`, build 15) is the first run of the 16分割表示 code (commit `7d0e57d0`; FDR class only, the old direction view moved to Mac extras ▸ 16方向ビュー): unit tests, the signed app build, the extracted-package check, the GUI self-check (including the 16分割 menu and sheet check) and packaging passed. Before it, run #130 (five attempts) could not start at all (hosted-runner assignment rejected, latest 2026-11-14 13:52 UTC) until the owner re-enabled Actions, and run #131 failed to compile on one Swift lexical error in `BrowserModel.init` (`projection.mode=.perspective`; a `=` glued to a leading-dot value is rejected), fixed in `b600745f`. Run #129 (commit `da3bfda2`, 378 tests) was the last CI-verified code before the 16分割 change. Run #133 (a manual run of the same code on documentation commit `c8c945fc`, 387 tests) built and published the pre-release `v0.2.0-beta.2` (GitHub Release; ad-hoc signed, not notarized; not yet run on a Mac).
 - CI run #126 (commit `93bce8dc`, build 14): 378 tests, 0 failures; signed app, extracted-package check, GUI check and settings smoke (password, delete and initialise on copies) passed. The run #128 artifact (same code, build 14) was verified on a Mac with the sample card's image: signature, read-only lists, history report CSVs, KML, BAK writer (13/13 parts) and delete/initialise on clones (`docs/validation-full-port.md`). Decoding/exports on a Mac, AVI beyond 4 GiB and the packaged GUI check on real media are still open.
 
@@ -27,11 +28,14 @@ Legend: `[x]` verified or explicitly documented; `[ ]` incomplete or blocked (th
 - [ ] Reader rule of 録画データ削除 at card generation 2 and above (the original listed nothing in the same experiments; unexplained), model-specific initialisation (format flow) and firmware update: original algorithms not recovered; execution against original media is refused by policy, and delete/initialise were never tried on a physical card.
 - [ ] Original-application comparison of printed layouts of the history report and frame printing.
 - [ ] Event/continuous-tab KML conversion compared with the original; Google Earth's display of KML.
-- [ ] AVI beyond 4 GiB with real media and destination-full behaviour.
+- [ ] AVI beyond 4 GiB with real media: the sample image has no long real video (about 1,800 frames per event; the continuous recordings have none), so it cannot be tested with it; the OpenDML segmentation is unit-tested with forced small segments only.
+- [x] Destination-full behaviour: MP4, AVI and BAK exports into a 40 MB volume failed with the system's no-space error and left no file (Mac, build 15 assets; `docs/validation-full-port.md`).
+- [ ] Video of the sample card's continuous recordings (#6–#23) is zero-filled, so playback/export of real continuous video and the GUI check on it are untested; the no-video notice is built (build 16) and covered with a generated zero-filled card.
 
 ## Validation / delivery
 - [x] All earlier tests preserved; 378 passing tests in GitHub Actions (run #126) with adverse inputs; run #132 also passes the new 16分割 tests.
 - [x] Exact build-13 artifact verified on a Mac with real data (run #82).
-- [ ] Exact latest artifact verified on a Mac with real data (partly done: the run #128 artifact was verified for lists, reports, KML, BAK writer and delete/initialise; decode/export paths, the packaged GUI check on real media and the newest build are pending).
+- [x] Exact build-15 release assets (`v0.2.0-beta.2`) verified on a Mac with real data: signature, lists, history CSVs, KML, MP4/AVI/PNG/print/report-PDF exports, BAK writer, delete/initialise on clones, destination-full and the packaged GUI check up to its raw-search step (`docs/validation-full-port.md`, "Build 15").
+- [ ] Exact latest artifact verified on a Mac with real data: build 16 (the no-video notice and the event-aware GUI check) is not built or run yet; the whole packaged GUI check has not yet passed on real media.
 - [x] Intel x86_64 unit tests and packaged-CLI smoke in the manual compatibility workflow (build 10, 126 tests; rerun on the final commit pending).
 - [x] Validation gaps recorded separately (`docs/validation-gaps.md`): physical SD/device, Windows interoperability beyond BAK, printer, Intel GUI, macOS 14 runtime.

@@ -31,11 +31,12 @@ final class ScanCancellation: @unchecked Sendable {
         do {
             model.muted=true // Exercise the audio clock without playing private recordings aloud.
             for _ in 0..<200 {
-                if model.image != nil && !model.scanning { break }
+                if (model.image != nil || model.videoNotice != nil) && !model.scanning { break }
                 if let error=model.errorMessage { throw BrowserError.io(error) }
                 try await Task.sleep(nanoseconds:100_000_000)
             }
-            guard let image=model.image, let index=model.index, index.frameCount > 30 else { throw BrowserError.io("GUI映像表示の待機が終了しました") }
+            guard model.image != nil || model.videoNotice != nil, let index=model.index, index.frameCount > 30 else { throw BrowserError.io("GUI映像表示の待機が終了しました") }
+            let image=model.image
             result["window_visible"] = window?.isVisible ?? false
             result["indexed_frames_estimate"] = index.frameCount
             result["validated_frames"] = index.validatedFrameCount
@@ -45,7 +46,14 @@ final class ScanCancellation: @unchecked Sendable {
             result["catalog_seconds"] = model.catalogSeconds
             result["selected_detail_seconds"] = model.detailSeconds
             result["partial_scan"] = index.isPartialScan
-            result["preview_width"] = Int(image.size.width);result["preview_height"] = Int(image.size.height)
+            result["preview_width"] = Int(image?.size.width ?? 0);result["preview_height"] = Int(image?.size.height ?? 0)
+            if image == nil {
+                // A recording without video bytes (zero-filled video area): the preview says so, no alert is raised, and the
+                // data side (clock, GPS, sensors, lists, reports) stays usable. The video checks below do not apply.
+                try await checkWithoutVideo(result:&result,folder:report.deletingLastPathComponent(),snapshot:snapshot)
+                result["passed"] = true
+                finishUICheck(result,report:report);return
+            }
             await model.renderFrame(20)
             guard model.frameIndex == 20 else { throw BrowserError.io("シーク位置が一致しません") }
             result["seek_to_frame_20"] = true
@@ -108,8 +116,33 @@ final class ScanCancellation: @unchecked Sendable {
             }
             result["passed"] = true
         } catch { result["passed"] = false;result["error"] = error.localizedDescription }
+        finishUICheck(result,report:report)
+    }
+    /// Writes the report, then quits. `terminate(_:)` can be deferred while an alert or sheet is showing (a failed check may leave one
+    /// open), so the process leaves on its own shortly afterwards; the report is already on disk.
+    private func finishUICheck(_ result:[String:Any],report:URL) {
         if let data=try? JSONSerialization.data(withJSONObject:result,options:[.prettyPrinted,.sortedKeys]) { try? data.write(to:report) }
-        if !CommandLine.arguments.contains("--ui-check-keep-open") { NSApp.terminate(nil) }
+        if !CommandLine.arguments.contains("--ui-check-keep-open") {
+            NSApp.terminate(nil)
+            DispatchQueue.main.asyncAfter(deadline:.now()+3) { exit(0) }
+        }
+    }
+    /// The GUI check for a selection whose frames carry no video bytes.
+    private func checkWithoutVideo(result:inout [String:Any],folder:URL,snapshot:String?) async throws {
+        guard let notice=model.videoNotice,model.errorMessage == nil else{throw BrowserError.io("映像のない録画で警告が表示されました: \(model.errorMessage ?? "通知なし")")}
+        result["video_available"]=false;result["video_notice"]=notice
+        result["route_points"]=model.route.count;result["raw_sensor_points"]=model.sensors.count
+        guard !model.route.isEmpty,!model.sensors.isEmpty else{throw BrowserError.io("映像のない録画でGPSまたはセンサーが読み込まれていません")}
+        // Seeking, stepping and playing must neither raise the alert nor stop the timeline.
+        await model.renderFrame(20)
+        guard model.frameIndex == 20,model.errorMessage == nil,model.videoNotice != nil else{throw BrowserError.io("映像のない録画でシークできません")}
+        model.togglePlay(backwards:false);try await Task.sleep(nanoseconds:1_500_000_000);model.pause()
+        result["playback_without_video_advanced_to_frame"]=model.frameIndex
+        guard model.frameIndex > 20,model.errorMessage == nil else{throw BrowserError.io("映像のない録画で再生位置が進みません")}
+        if let snapshot,let view=window?.contentView {try captureOwnView(view,to:URL(fileURLWithPath:snapshot));result["own_window_snapshot_saved"]=true}
+        if CommandLine.arguments.contains("--ui-check-extra") {
+            try await checkAdditionalFeatures(result:&result,folder:folder,videoAvailable:false)
+        }
     }
     func captureOwnView(_ view:NSView,to url:URL) throws {
         view.layoutSubtreeIfNeeded();view.displayIfNeeded()
@@ -118,15 +151,16 @@ final class ScanCancellation: @unchecked Sendable {
         guard let data=rep.representation(using:.png,properties:[:]) else{throw BrowserError.io("GUI画像を保存できません")}
         try data.write(to:url)
     }
-    private func checkAdditionalFeatures(result:inout [String:Any],folder:URL) async throws {
+    private func checkAdditionalFeatures(result:inout [String:Any],folder:URL,videoAvailable:Bool=true) async throws {
         guard let r=model.recording,let clock=model.packet?.telemetry.clock,let zone=TimeZone(identifier:"Asia/Tokyo"),let date=clock.date(in:zone) else{throw BrowserError.io("追加GUI検証の録画時刻がありません")}
         let oldQuery=model.rawQuery
         var query=RawSensorQuery();query.enabled=true;query.eventByte=Int(r.packets[0].telemetry.eventRaw);model.rawQuery=query
-        guard model.rawQueryResults[r.id]==true,model.filteredRecordings.contains(where:{$0.id==r.id}) else{throw BrowserError.io("raw一致検索で録画を確認できません")}
+        // Event recordings are listed on the event tab; only continuous recordings appear in `filteredRecordings`.
+        guard model.rawQueryResults[r.id]==true,r.isEvent || model.filteredRecordings.contains(where:{$0.id==r.id}) else{throw BrowserError.io("raw一致検索で録画を確認できません")}
         let used=Set(r.packets.map{Int($0.telemetry.eventRaw)})
         if let absent=(0...255).first(where:{!used.contains($0)}) {
             query.eventByte=absent;model.rawQuery=query
-            guard model.rawQueryResults[r.id]==false,!model.filteredRecordings.contains(where:{$0.id==r.id}) else{throw BrowserError.io("raw不一致検索が録画を除外しません")}
+            guard model.rawQueryResults[r.id]==false,r.isEvent || !model.filteredRecordings.contains(where:{$0.id==r.id}) else{throw BrowserError.io("raw不一致検索が録画を除外しません")}
         }
         model.rawQuery=oldQuery;result["raw_filter_matches_and_excludes"]=true
         let oldTrack=model.externalGPSTrack,oldZone=model.deviceTimeZoneID,oldOffset=model.gpsLogOffset,oldUse=model.useExternalGPS
@@ -219,6 +253,7 @@ final class ScanCancellation: @unchecked Sendable {
             guard !application.isTerminated else{throw BrowserError.io("Google Earthが起動直後に終了しました")}
             result["earth_launch"]=["explicit_opt_in":true,"bundle_identifier":application.bundleIdentifier ?? "","process_id":application.processIdentifier,"kml":kml.lastPathComponent,"scope":"LaunchServices open completion; verify Earth document UI separately"] as [String:Any]
         }
+        guard videoAvailable else{result["video_dependent_checks_skipped"]=["view_operations","legacy_menu"];return}
         try await checkViewOperations(result:&result,folder:folder)
         try await checkLegacyMenu(result:&result,folder:folder)
     }
