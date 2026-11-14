@@ -119,8 +119,11 @@ extension AppDelegate {
 
         controller.dispatch(514)
         controller.dispatch(512)
+        // The drag is a fraction of the view width, so the expected shift depends on the frame width (1280 px test pattern: 0.1; a 2560 px real frame: 0.05).
+        let lensStart = ProjectionSettings()
         drag(centre, CGPoint(x: centre.x + 128, y: centre.y))
-        try record("lensMoveDrag", abs(model.projection.frontCenterX - 0.35) < 1e-6 && abs(model.projection.rearCenterX - 0.85) < 1e-6, "\(model.projection.frontCenterX),\(model.projection.rearCenterX)")
+        try record("lensMoveDrag", abs(model.projection.frontCenterX - (lensStart.frontCenterX + 128.0 / Double(w))) < 1e-6 && abs(model.projection.rearCenterX - (lensStart.rearCenterX + 128.0 / Double(w))) < 1e-6,
+                   "\(model.projection.frontCenterX),\(model.projection.rearCenterX) width \(w)")
         controller.dispatch(512)
         controller.dispatch(513)
         drag(centre, CGPoint(x: centre.x, y: centre.y - 20))
