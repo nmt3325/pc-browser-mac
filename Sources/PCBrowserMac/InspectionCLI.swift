@@ -327,6 +327,23 @@ enum InspectionCLI {
                 report["legacy_history_report"]=["files":files.map(\.lastPathComponent),"bytes":sizes,"rows":historyReport.rowCount,"first_row":historyReport.first+1,"last_row":historyReport.last+1,
                     "data_lines":historyReport.dataLineCount,"total_row":historyReport.totalCells] as [String:Any]
             }
+            if let dir=value("--legacy-history-kml-dir",in:args) {
+                // ログデータ変換: the Google Earth file of the whole per-second journal, written into a new folder only.
+                guard let area=result.layout?.history,let log=try HistoryLog.read(source:source,area:area),let kml=JournalKML(log:log) else{throw BrowserError.invalid("この入力には読み取れる履歴記録がありません")}
+                var options=JournalKMLOptions()
+                options.showPoints = !args.contains("--journal-kml-no-points");options.showRoute = !args.contains("--journal-kml-no-route")
+                options.density=value("--journal-kml-density",in:args).flatMap(Int.init) ?? options.density
+                options.width=value("--journal-kml-width",in:args).flatMap(Int.init) ?? options.width
+                options.alpha=value("--journal-kml-alpha",in:args).flatMap(Int.init) ?? options.alpha
+                options.rgb=value("--journal-kml-rgb",in:args).flatMap{UInt32($0,radix:16)} ?? options.rgb
+                let folder=URL(fileURLWithPath:dir,isDirectory:true),file=kml.defaultFileName
+                if let reason=ReportFiles.refusal(names:[file],folder:folder,protecting:[url]){throw BrowserError.invalid(reason)}
+                let kmlBegan=ProcessInfo.processInfo.systemUptime
+                let data=try kml.data(options:options.clamped)
+                try FileManager.default.createDirectory(at:folder,withIntermediateDirectories:true)
+                try data.write(to:folder.appendingPathComponent(file),options:.withoutOverwriting)
+                report["legacy_history_kml"]=["file":file,"bytes":data.count,"entries":kml.entryCount,"rows":log.rows.count,"density":options.clamped.density,"seconds":ProcessInfo.processInfo.systemUptime-kmlBegan] as [String:Any]
+            }
             report["total_seconds"] = ProcessInfo.processInfo.systemUptime-began
             report["input_size_and_mtime_unchanged"] = before == (try snapshot(url))
             let bytes=try JSONSerialization.data(withJSONObject:report,options:[.prettyPrinted,.sortedKeys])
