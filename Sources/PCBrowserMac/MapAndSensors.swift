@@ -56,31 +56,58 @@ struct SensorPanel:View {
     @ObservedObject var model:BrowserModel
     @State private var kind="加速度"
     private var isAcceleration:Bool {kind=="加速度"}
-    private var factor:Double? {isAcceleration ? model.sensorCalibration.accelerationCountsPerUnit:model.sensorCalibration.gyroCountsPerUnit}
-    private var calibrated:Bool {if let factor,factor.isFinite,factor>0{return true};return false}
-    private func shown(_ raw:Double)->Double {if calibrated,let factor{return raw/factor};return raw}
+    private var userFactor:Double? {
+        let value=isAcceleration ? model.sensorCalibration.accelerationCountsPerUnit:model.sensorCalibration.gyroCountsPerUnit
+        if let value,value.isFinite,value>0{return value};return nil
+    }
+    /// Acceleration is always converted (a user factor wins, otherwise the original's 1000 counts/G); the gyro stays raw until a factor is entered.
+    private var factor:Double? {userFactor ?? (isAcceleration ? Double(SensorReadout.accelerationCountsPerG):nil)}
+    private var calibrated:Bool {factor != nil}
+    private func shown(_ raw:Double)->Double {if let factor{return raw/factor};return raw}
     private var rows:[SensorSample] {model.sensors.filter{$0.kind==kind}}
     private var yDomain:ClosedRange<Double> {
         if calibrated {let full=isAcceleration ? model.sensorScale.accelerationFullScale:model.sensorScale.gyroFullScale;return -full...full}
         let values=rows.map{$0.value};let low=min(values.min() ?? -1,-1),high=max(values.max() ?? 1,1);return low...high
     }
     private var tickValues:[Double] {
-        if calibrated {return isAcceleration ? model.sensorScale.accelerationTickValues:model.sensorScale.gyroTickValues}
+        if calibrated {
+            if isAcceleration {var ticks=model.sensorScale.accelerationTickValues;ticks.insert(0,at:2);return ticks}
+            return model.sensorScale.gyroTickValues
+        }
         let range=yDomain;return [range.upperBound,range.upperBound/2,0,range.lowerBound/2,range.lowerBound]
     }
     private func tickLabel(_ value:Double)->String {calibrated && isAcceleration ? String(format:"%.1f",value):String(format:"%.0f",value)}
     private var note:String {
-        var text=calibrated ? "利用者入力の換算係数 · 目盛りは原版の「\(model.sensorScale.label)」":"raw counts · 原版の換算係数は未確定（設定▸音声・GPSで任意入力）"
+        var text:String
+        if isAcceleration {text=userFactor != nil ? "利用者入力の換算係数 · 目盛りは原版の「\(model.sensorScale.label)」":"原版と同じ 1000 counts/G · 目盛りは原版の「\(model.sensorScale.label)」"}
+        else {text=calibrated ? "利用者入力の換算係数 · 目盛りは原版の「\(model.sensorScale.label)」":"raw counts · ジャイロの原版換算係数は未確定（設定▸音声・GPSで任意入力）"}
         if let legacy=model.legacyModel,legacy.sensorPanelClass==0 {text+=" · 選択機種の原版はセンサーパネルを描画しません"}
         return text
     }
+    private static let axisColors:[Color]=[.red,.green,.blue]
+    private func accelerationText(_ raw:Int16)->String {
+        if let user=userFactor,user != Double(SensorReadout.accelerationCountsPerG) {return String(format:"%.2f",Double(raw)/user)}
+        return SensorReadout.accelerationText(raw:Int(raw))
+    }
+    private var readout:some View {
+        let values=(isAcceleration ? model.packet?.telemetry.accelerationRaw:model.packet?.telemetry.gyroRaw) ?? []
+        return HStack(spacing:14) {
+            ForEach(0..<min(3,values.count),id:\.self){j in
+                HStack(spacing:4){
+                    Text(SensorReadout.axisNames[j]).bold().foregroundStyle(Self.axisColors[j])
+                    Text(isAcceleration ? accelerationText(values[j]):String(values[j])).monospacedDigit()
+                }
+            }
+            if !values.isEmpty {Text(isAcceleration ? "G":"raw").foregroundStyle(.secondary)}
+        }.font(.callout)
+    }
     var body:some View {
         VStack(alignment:.leading,spacing:5) {
-            HStack {Picker("センサー",selection:$kind){Text("加速度").tag("加速度");Text("ジャイロ").tag("ジャイロ")}.pickerStyle(.segmented).frame(width:200);Spacer();Text(note).font(.caption).foregroundStyle(.secondary)}
+            HStack {Picker("センサー",selection:$kind){Text("加速度").tag("加速度");Text("ジャイロ").tag("ジャイロ")}.pickerStyle(.segmented).frame(width:200);readout;Spacer();Text(note).font(.caption).foregroundStyle(.secondary)}
             Chart {
                 ForEach(rows){sample in LineMark(x:.value("録画内の秒",sample.time),y:.value("値",shown(sample.value))).foregroundStyle(by:.value("軸",sample.axis)).lineStyle(StrokeStyle(lineWidth:1.4))}
                 RuleMark(x:.value("現在",model.currentSeconds)).foregroundStyle(.secondary).lineStyle(StrokeStyle(lineWidth:1,dash:[4]))
-            }.chartForegroundStyleScale(["X":Color.orange,"Y":Color.green,"Z":Color.blue]).chartXAxisLabel("録画内の秒").chartYAxisLabel(calibrated ? "換算値":"raw").chartYScale(domain:yDomain)
+            }.chartForegroundStyleScale(["X":Color.red,"Y":Color.green,"Z":Color.blue]).chartXAxisLabel("録画内の秒").chartYAxisLabel(isAcceleration ? "G":(calibrated ? "換算値":"raw")).chartYScale(domain:yDomain)
             .chartYAxis {AxisMarks(values:tickValues){value in AxisGridLine();AxisTick();AxisValueLabel{Text(tickLabel(value.as(Double.self) ?? 0))}}}
             .frame(minHeight:120)
         }.padding(10)

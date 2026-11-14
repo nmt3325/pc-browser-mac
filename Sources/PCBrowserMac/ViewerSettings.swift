@@ -75,13 +75,13 @@ struct ViewerSettings: View {
                         SettingsHelp("標準は原版VA 0x56DE20から確認したTokyo→WGS84変換です。ヘッダーの緯度経度は1/600000度、速度はraw×0.036 km/hとして読み出します。")
                         SettingsHelp("カード時刻にはタイムゾーンがないため、表示・CSVにUTCを推測して付加しません。音声形式は録画のD103/D105ヘッダーから読み取ります。")
                         Text("音声: " + model.audioStatus).font(.callout).fixedSize(horizontal: false, vertical: true)
-                        SettingsHelp("G・ジャイロは符号付きraw値で表示します。機種別の物理単位換算・軸方向は未確定です。")
+                        SettingsHelp("加速度は原版と同じ換算（raw÷1000 G、0.01単位で切り捨て、軸順X/Y/Z）で表示します。ジャイロは符号付きraw値のままで、原版の換算は未確定です。")
                     }
                     GPSSynchronizationPreferences(model: model)
-                    SettingsGroup("センサー換算（任意・未入力ならraw表示）") {
-                        SettingsHelp("原版の加速度スケールは目盛り（拡大±1.0／標準±2.0／縮小1±3.0／縮小2±4.0、ジャイロは±36／72／108／144）まで確認済みですが、rawからの換算係数は未確定です。既知の係数を入力した場合だけ、センサー表示を原版の目盛りで物理値表示します。")
+                    SettingsGroup("センサー換算（任意）") {
+                        SettingsHelp("加速度は未入力なら原版と同じ1000 counts/Gで表示します（制御した値を原版に与えて確認済み）。ジャイロは原版の換算係数が未確定のため、未入力ならraw表示です。既知の係数を入力すると、センサー表示を原版の目盛り（拡大±1.0／標準±2.0／縮小1±3.0／縮小2±4.0、ジャイロは±36／72／108／144）で物理値表示します。")
                         Picker("表示スケール", selection: $model.sensorScale) { ForEach(GSensorScale.allCases, id: \.self) { Text($0.label).tag($0) } }.pickerStyle(.segmented)
-                        CalibrationField(title: "加速度 counts/G", hint: "例: 8192", value: $model.sensorCalibration.accelerationCountsPerUnit)
+                        CalibrationField(title: "加速度 counts/G", hint: "空欄＝1000（原版）", value: $model.sensorCalibration.accelerationCountsPerUnit)
                         CalibrationField(title: "ジャイロ counts/単位", hint: "例: 131", value: $model.sensorCalibration.gyroCountsPerUnit)
                     }
                 }.tabItem { Text("音声・GPS") }.tag(1)
