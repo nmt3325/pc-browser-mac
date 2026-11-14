@@ -45,13 +45,14 @@ struct BrowserView: View {
         .onChange(of:model.fileListVisible){_,visible in columnVisibility=visible ? .all:.detailOnly}
         .onChange(of:columnVisibility){_,value in model.fileListVisible=(value != .detailOnly)}
         .sheet(isPresented:$model.showReport){RecordingReportView(model:model)}
+        .sheet(isPresented:$model.showHistoryReport){HistoryReportView(model:model)}
     }
     private var sidebar:some View {
         VStack(alignment:.leading,spacing:0) {
             VStack(alignment:.leading,spacing:6){Label("PC Browser Mac",systemImage:"sdcard").font(.headline);Text(model.sourceName).font(.caption).foregroundStyle(.secondary).lineLimit(2)}.padding(14)
             TextField("日時・CH・録画IDで検索",text:$model.search).textFieldStyle(.roundedBorder).padding(.horizontal,10)
             Picker("一覧",selection:$model.listKind){ForEach(RecordListKind.allCases){Text($0.title).tag($0)}}.pickerStyle(.segmented).labelsHidden().padding(.horizontal,10).padding(.top,8)
-            if model.listKind == .history {
+            if model.listKind == .continuous {
             HStack {Picker("表示",selection:$model.filter){ForEach(["すべて","GPSあり","音声あり","しおり"],id:\.self){Text($0)}}.labelsHidden();Button{model.descending.toggle()}label:{Image(systemName:model.descending ? "arrow.down":"arrow.up")}.help("日時の並び順")}.padding(10)
             HStack{Text("速度 ≥");TextField("km/h",text:$model.minSpeed).frame(width:70);Text("km/h")}.font(.caption).padding(.horizontal,12).padding(.bottom,8)
             if model.hasDetailFilter && model.hasUnsearchedDetails {
@@ -61,9 +62,9 @@ struct BrowserView: View {
             }
             Divider()
             switch model.listKind {
-            case .history: recordingList
+            case .continuous: recordingList
             case .event: eventList
-            case .normal: journalList
+            case .history: journalList
             }
             Divider()
             HStack{Label("読み取り専用",systemImage:"lock.shield");Spacer();if !model.selectedExports.isEmpty{Text("\(model.selectedExports.count)件選択")}}.font(.caption).foregroundStyle(.secondary).padding(12)
@@ -102,7 +103,7 @@ struct BrowserView: View {
     private var journalList:some View {
         VStack(spacing:0) {
             if model.historyLog != nil {
-                List {
+                List(selection:$model.selectedJournalRows) {
                     ForEach(model.filteredJournalRows){row in
                         HStack(spacing:8) {
                             Text("\(row.id+1)").font(.caption2).monospacedDigit().foregroundStyle(.secondary).frame(width:34,alignment:.trailing)
@@ -112,17 +113,23 @@ struct BrowserView: View {
                             }
                             Spacer(minLength:0)
                             if model.video(for:row) != nil {Button("映像"){model.showVideo(for:row)}.buttonStyle(.borderless).font(.caption).help("この時刻に対応する履歴記録の映像へ移動")}
-                        }.padding(.vertical,2)
+                        }.padding(.vertical,2).tag(row.id)
                     }
                 }
             } else {
                 VStack(spacing:10) {
                     if model.historyLoading {ProgressView()}
-                    Text(model.historyStatus.isEmpty ? "常時録画の記録を読み取ります":model.historyStatus).font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                    Text(model.historyStatus.isEmpty ? "履歴記録を読み取ります":model.historyStatus).font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
                     Button("読み込み"){model.loadHistoryIfNeeded()}.disabled(model.historyLoading || model.scanning)
                 }.padding().frame(maxHeight:.infinity)
             }
-            if model.historyLog != nil {Text(model.historyStatus).font(.caption2).foregroundStyle(.secondary).padding(.vertical,4)}
+            if model.historyLog != nil {
+                HStack(spacing:8) {
+                    Text(model.selectedJournalRows.isEmpty ? model.historyStatus:"\(model.selectedJournalRows.count)行選択 · "+model.historyStatus).font(.caption2).foregroundStyle(.secondary).lineLimit(2)
+                    Spacer(minLength:4)
+                    Button("レポート表示"){model.openHistoryReport()}.font(.caption).disabled(model.busy || model.scanning).help("選択した行（未選択なら全行）の履歴記録レポートを表示し、CSVを書き出します")
+                }.padding(.horizontal,10).padding(.vertical,4)
+            }
         }
     }
     private var projectionBar:some View {

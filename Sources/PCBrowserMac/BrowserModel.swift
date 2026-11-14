@@ -39,7 +39,7 @@ import PCBrowserCore
     @Published var followMap=true
     @Published var satelliteMap=false
     @Published var search=""
-    @Published var listKind=RecordListKind.history {didSet {if oldValue != listKind,listKind == .normal {loadHistoryIfNeeded()}}}
+    @Published var listKind=RecordListKind.continuous {didSet {if oldValue != listKind,listKind == .history {loadHistoryIfNeeded()}}}
     @Published var eventEntries:[EventEntry]=[]
     @Published var historyLog:HistoryLog?
     @Published var historyStatus=""
@@ -50,6 +50,11 @@ import PCBrowserCore
     @Published var rawQuery = RawSensorQuery() { didSet { if oldValue != rawQuery { resetRawSearch() } } }
     @Published var rawQueryResults: [String: Bool] = [:]
     @Published var showReport = false
+    @Published var showHistoryReport = false
+    /// Rows of the 履歴記録 list chosen for the 履歴記録レポート (none = all rows).
+    @Published var selectedJournalRows = Set<Int>()
+    /// GUI self-check only: a made-up report shown instead of the loaded journal.
+    var historyReportOverride:LegacyHistoryReport?
     /// Trigger types chosen in トリガ種類選択; nil shows every trigger of the recording.
     @Published var triggerTypeSelection:Set<String>?
     @Published var selectedExports=Set<String>()
@@ -154,20 +159,25 @@ import PCBrowserCore
         var rows=(historyLog?.rows ?? []).filter{r in s.isEmpty || (r.startText+" "+r.durationText+" "+(r.deviceID ?? "")).localizedCaseInsensitiveContains(s)}
         if descending {rows.reverse()};return rows
     }
+    /// レポート表示 on the 履歴記録 list: the report of the selected rows (all rows when none are selected).
+    func openHistoryReport() {
+        guard historyLog != nil || historyReportOverride != nil else{errorMessage="履歴記録レポートには読み込み済みの履歴記録が必要です。履歴記録の一覧を開いて読み込んでください";return}
+        showHistoryReport=true
+    }
     func video(for row:HistoryRow)->Recording? {historyLog?.matchingRecording(for:row,in:index?.continuousRecordings ?? [])}
-    func showVideo(for row:HistoryRow) {if let r=video(for:row){search="";listKind = .history;selectedID=r.id}}
+    func showVideo(for row:HistoryRow) {if let r=video(for:row){search="";listKind = .continuous;selectedID=r.id}}
     /// The per-second journal behind the event region is read only when its tab is opened (about 150 MB on a full card).
     func loadHistoryIfNeeded() {
         guard historyLog==nil,!historyLoading,!scanning,let source,let index else{return}
-        guard let area=index.layout?.history else{historyStatus="この入力には常時録画の記録領域がありません（部分コピー・BAK・領域表が不明な入力）";return}
-        historyLoading=true;historyStatus="常時録画の記録を読み取っています…";let token=generation
+        guard let area=index.layout?.history else{historyStatus="この入力には履歴記録の記録領域がありません（部分コピー・BAK・領域表が不明な入力）";return}
+        historyLoading=true;historyStatus="履歴記録を読み取っています…";let token=generation
         Task {
             do {
                 let log=try await Task.detached(priority:.userInitiated){try HistoryLog.read(source:source,area:area)}.value
                 guard generation==token else{return}
                 historyLoading=false;historyLog=log
-                if let log {historyStatus="\(log.rows.count)件 · 秒単位の記録 \(log.sampleRecords)件"} else {historyStatus="常時録画の記録領域がこの入力に含まれていないか、有効な記録がありません"}
-            }catch{guard generation==token else{return};historyLoading=false;historyStatus="常時録画を読み取れませんでした: "+error.localizedDescription}
+                if let log {historyStatus="\(log.rows.count)件 · 秒単位の記録 \(log.sampleRecords)件"} else {historyStatus="履歴記録の記録領域がこの入力に含まれていないか、有効な記録がありません"}
+            }catch{guard generation==token else{return};historyLoading=false;historyStatus="履歴記録を読み取れませんでした: "+error.localizedDescription}
         }
     }
     private func loadEvents(_ result:ImageIndex,source:any ByteSource,token:UUID) {
@@ -212,7 +222,7 @@ import PCBrowserCore
         audioPlayer=nil;audioClip=nil;renderer=nil;timeline=RecordingTimeline(packets:[])
         frameIndex=0;scrubber=0;scanning=false;busy=false;progress=0;selectionLoading=false;rendering=false
         selectedExports=[];cardFiles=[];rawQueryResults=[:];route=[];sensors=[];errorMessage=nil
-        eventEntries=[];historyLog=nil;historyStatus="";historyLoading=false;listKind = .history
+        eventEntries=[];historyLog=nil;selectedJournalRows=[];historyStatus="";historyLoading=false;listKind = .continuous
         useExternalGPS=false;externalGPSTrack=nil;externalGPSStatus="外部ログ未選択";deviceTimeZoneID="";gpsLogOffset=0
         archiveNotice="";cardNotice="";audioStatus="音声なし";audioDuration=0;audioDrift=0;sourceName="未選択"
         firstListSeconds=0;catalogSeconds=0;detailSeconds=0;status="IMGファイルまたはSDカードを選択してください"
@@ -234,7 +244,7 @@ import PCBrowserCore
     private func load(_ source:any ByteSource,name:String,limit:UInt64?=nil,recovery:Bool=false) {
         cancel();generation=UUID();let token=generation,flag=ScanCancellation(),began=ProcessInfo.processInfo.systemUptime;cancellation=flag
         self.source=source;scanLimit=limit;index=nil;selectedID=nil;image=nil;sourceName=name;progress=0;scanning=true;busy=false;errorMessage=nil;selectedExports=[];cardFiles=[];rawQueryResults=[:]
-        eventEntries=[];historyLog=nil;historyStatus="";historyLoading=false;listKind = .history
+        eventEntries=[];historyLog=nil;selectedJournalRows=[];historyStatus="";historyLoading=false;listKind = .continuous
         useExternalGPS=false;externalGPSTrack=nil;externalGPSStatus="外部ログ未選択";deviceTimeZoneID="";gpsLogOffset=0
         firstListSeconds=0;catalogSeconds=0;detailSeconds=0;archiveNotice=(source as? ArchiveSource)?.isHashVerified == false ? "バックアップSHA-256: 未照合（一覧表示後に照合）":(source is WindowsBackupSource || source is WindowsBackupSet ? "Windows BAK\((source as? WindowsBackupSet).map{"（\($0.parts.count)ファイル）"} ?? ""): 部分コピー・読み取り専用（元形式にSHA-256照合なし）":"")
         status=recovery ? "全領域を読み取り専用で復旧走査しています…":"映像を読み込まずに録画索引を取得しています…"
