@@ -58,6 +58,7 @@ def factory(first):
         word(c, 0x1BE + 4 * i, v)
     for i in range(8):
         c[0x1D6 + i] = 0xA1 + i
+    c[0x1DC] = 0x14  # model code of the Q-01 family: the family whose password gate is implemented
     word(c, 0x1E0, 1)
     word(c, 0x1E4, 1)
     word(c, 0x1E8, 1)
@@ -325,6 +326,63 @@ def run(binary, root):
     assert (t['audio'], t['beep'], t['cardID']) == (False, False, 'ABC-123') and t['mode'] == 'both', t
     assert file_sha(card) == card_hash, 'the input image must not change'
     result['plain_edit'] = {'clone': out['usedClone'], 'changed_sectors': 2}
+
+    # 3b. Password: a flag byte and the word 3 x password + 1639 behind the ID text, confirmed like the dialog, cleared back to the exact bytes.
+    pw_out = root / 'settings-pw.img'
+    ok(binary, '--settings-apply', card, '--set', 'password=1234', '--confirm-password', '1234', '--out', pw_out)
+    pw_control = sector(pw_out, CONTROL)
+    assert changed_offsets(base_control, pw_control) - {0x12, 0x13} == {0x88, 0x89, 0x8A}, sorted(changed_offsets(base_control, pw_control))
+    assert pw_control[0x88:0x8B] == bytes([1]) + struct.pack('<H', 3 * 1234 + 1639) and checksum_ok(pw_control, base_channel)
+    assert sector(pw_out, BACKUP_CONTROL) == pw_control and sector(pw_out, CHANNEL) == base_channel
+    assert changed_sectors(card, pw_out) == {CONTROL, BACKUP_CONTROL}, changed_sectors(card, pw_out)
+    shown_pw = root / 'settings-show-pw.json'
+    ok(binary, '--settings-show', pw_out, '--report', shown_pw)
+    assert load(shown_pw)['settings']['password'] == 1234 and info['settings']['password'] is None
+    pw_bad = root / 'settings-pw-bad.img'
+    for extra in (['--set', 'password=1234'], ['--set', 'password=1234', '--confirm-password', '1235'],
+                  ['--set', 'password=999', '--confirm-password', '999'], ['--set', 'password=12a4', '--confirm-password', '12a4'],
+                  ['--set', 'password=12345', '--confirm-password', '12345'], ['--set', 'password=0999', '--confirm-password', '0999']):
+        refused(binary, '--settings-apply', card, *extra, '--out', pw_bad)
+        assert not pw_bad.exists(), extra
+    # The card-open gate of the app: a card with a password loads only with the right one; a card without one loads freely.
+    gate = cli(binary, '--password-check', pw_out, '--card-password', '1234')
+    assert gate.returncode == 0 and 'load=allowed' in gate.stdout, (gate.stdout, gate.stderr)
+    for typed in (['--card-password', '1235'], ['--card-password', ''], []):
+        refused_gate = cli(binary, '--password-check', pw_out, *typed)
+        assert refused_gate.returncode == 1 and 'load=refused' in refused_gate.stdout, (typed, refused_gate.stdout)
+    free = cli(binary, '--password-check', card)
+    assert free.returncode == 0 and 'locked=false' in free.stdout, free.stdout
+    # Clearing needs its own confirmation and gives back the byte-identical sector.
+    pw_out.chmod(0o444)
+    refused(binary, '--settings-apply', pw_out, '--set', 'password=none', '--out', pw_bad)
+    assert not pw_bad.exists()
+    pw_cleared = root / 'settings-pw-cleared.img'
+    ok(binary, '--settings-apply', pw_out, '--set', 'password=none', '--confirm-clear-password', '--out', pw_cleared)
+    assert sector(pw_cleared, CONTROL) == base_control and sector(pw_cleared, BACKUP_CONTROL) == base_control
+    # Card ID and password side by side; saving the unchanged password is not a change.
+    pw_both = root / 'settings-pw-both.img'
+    ok(binary, '--settings-apply', card, '--set', 'id=' + 'Z' * 24, '--set', 'password=9999', '--confirm-password', '9999', '--out', pw_both)
+    both = sector(pw_both, CONTROL)
+    assert both[0x66:0x7E] == b'Z' * 24 and both[0x7E:0x88] == bytes(10) and both[0x88:0x8B] == bytes([1]) + struct.pack('<H', 3 * 9999 + 1639)
+    pw_both.chmod(0o444)
+    refused(binary, '--settings-apply', pw_both, '--set', 'password=9999', '--out', pw_bad)
+    assert not pw_bad.exists()
+    result['password'] = {'changed_sectors': 2, 'gate_checked': True, 'cleared_identical': True}
+
+    # 3c. 初期設定に戻す: the dialog's defaults (10+10 s, 24 h, ...), card ID / password / multi-battery kept, history change = layout change.
+    reset_in = root / 'settings-reset-in.img'
+    ok(binary, '--settings-apply', card, '--set', 'mode=both', '--set', 'fps=2', '--set', 'audio=off', '--set', 'beep=off', '--set', 'battery=on',
+       '--set', 'id=KEEP', '--set', 'password=2468', '--confirm-password', '2468', '--out', reset_in)
+    reset_in.chmod(0o444)
+    reset_out = root / 'settings-reset-out.img'
+    report_reset = root / 'settings-reset.json'
+    ok(binary, '--settings-apply', reset_in, '--set', 'reset=defaults', '--out', reset_out, '--report', report_reset)
+    rep = load(report_reset)
+    after = rep['after']
+    assert (after['mode'], after['frameRateIndex'], after['eventWindowIndex'], after['historyHoursIndex'], after['historyDoubleRate'], after['audio'], after['beep']) == ('both', 0, 0, 0, False, True, True), after
+    assert (after['cardID'], after['password'], after['multiBattery']) == ('KEEP', 2468, True), after
+    assert rep['layoutChanged'] is True and rep['regionsAreStandard'] is True, rep
+    result['reset_defaults'] = True
 
     # 4. Layout change: event-only, slower rate clamped, region table recomputed, generation 1 -> 2.
     out2 = root / 'settings-out2.img'

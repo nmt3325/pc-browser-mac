@@ -278,6 +278,7 @@ final class ScanCancellation: @unchecked Sendable {
         if let output=InspectionCLI.value("--view-check",in:CommandLine.arguments) { exit(InspectionCLI.viewCheck(output)) }
         if CommandLine.arguments.contains("--settings-show") { exit(SettingsCLI.show(CommandLine.arguments)) }
         if CommandLine.arguments.contains("--settings-apply") { exit(SettingsCLI.run(CommandLine.arguments)) }
+        if CommandLine.arguments.contains("--password-check") { exit(SettingsCLI.passwordCheck(CommandLine.arguments)) }
         runApplication()
     }
     @MainActor static func runApplication() {
