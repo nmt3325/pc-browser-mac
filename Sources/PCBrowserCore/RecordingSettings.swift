@@ -70,6 +70,15 @@ public struct RecordingSettings: Equatable, Sendable {
         s.multiBatteryConnected = multiBatteryConnected
         return s
     }
+    /// What the original's 「記録設定データ初期化」 (録画データ削除ダイアログの2番目の選択) leaves behind: the dialog defaults of
+    /// `resettingToDialogDefaults()`, but the password is cleared and multi-battery is reset as well. The SDカードID stays.
+    /// docs/recording-data-operations.md
+    public func resettingForInitialization() -> RecordingSettings {
+        var s = resettingToDialogDefaults()
+        s.password = nil
+        s.multiBatteryConnected = false
+        return s
+    }
     /// In easy mode the single 感度 slider sets all three values.
     public mutating func setEasySensitivity(_ value: Int) {
         shockSensitivity = value; accelerationSensitivity = value; steeringSensitivity = value
@@ -327,7 +336,8 @@ public enum RecordingSettingsCodec {
             s.easyMode = false
         }
         switch (c[Offset.batteryA], c[Offset.batteryB]) {
-        case (0, 0): s.multiBatteryConnected = false
+        // (0, 2) is what 記録設定データ初期化 leaves on a card that had the multi-battery ticked: it resets the first byte only.
+        case (0, 0), (0, 2): s.multiBatteryConnected = false
         case (1, 2): s.multiBatteryConnected = true
         default: throw BrowserError.unsupported("マルチバッテリー設定を認識できません")
         }
@@ -353,7 +363,9 @@ public enum RecordingSettingsCodec {
     }
 
     /// Read-modify-write: only the modelled fields change; every other byte of both sectors is kept.
-    public static func apply(_ requested: RecordingSettings, control: Data, channel: Data) throws -> RecordingSettingsEdit {
+    /// `forceStandardLayout` writes the standard region table for the requested mode and history even when the card's own table differs
+    /// from the formula (the original's 記録設定データ初期化 resets the table whatever it held).
+    public static func apply(_ requested: RecordingSettings, control: Data, channel: Data, forceStandardLayout: Bool = false) throws -> RecordingSettingsEdit {
         let old = try decode(control: control, channel: channel)
         let s = requested.normalized()
         try s.validate()
@@ -384,13 +396,14 @@ public enum RecordingSettingsCodec {
             c[Offset.gSensor] = 4; c[Offset.easy] = 0; c[Offset.shock] = 0; c[Offset.acceleration] = 0; c[Offset.steering] = 0
         }
         c[Offset.batteryA] = s.multiBatteryConnected ? 1 : 0
-        c[Offset.batteryB] = s.multiBatteryConnected ? 2 : 0
+        // Only a change of the setting rewrites the second byte, so a card left as (0, 2) by the initialization keeps it.
+        if s.multiBatteryConnected { c[Offset.batteryB] = 2 } else if old.settings.multiBatteryConnected { c[Offset.batteryB] = 0 }
         let id = Array(s.cardID.utf8)
         for i in Offset.cardID..<Offset.reservedEnd { c[i] = i < Offset.cardIDEnd && i - Offset.cardID < id.count ? id[i - Offset.cardID] : 0 }
         for (k, b) in CardPassword.encode(s.password).enumerated() { c[Offset.passwordFlag + k] = b }
-        let layoutChanged = s.changesLayout(from: old.settings)
+        let layoutChanged = forceStandardLayout || s.changesLayout(from: old.settings)
         if layoutChanged {
-            guard old.regionsAreStandard else { throw BrowserError.unsupported("領域表がこの版の既知の計算式と一致しないため、記録モード・履歴の変更は書き込めません") }
+            guard old.regionsAreStandard || forceStandardLayout else { throw BrowserError.unsupported("領域表がこの版の既知の計算式と一致しないため、記録モード・履歴の変更は書き込めません") }
             guard let table = RecordingRegionTable.standard(mode: s.mode, historyHoursIndex: s.historyHoursIndex, doubleRate: s.historyDoubleRate,
                                                             firstRecordSector: old.regions.firstRecordSector, journalEnd: old.regions.journalEnd) else {
                 throw BrowserError.invalid("この容量では指定した記録モード・履歴時間の領域を確保できません")
