@@ -3,7 +3,7 @@
 Legend: `[x]` verified or explicitly documented; `[ ]` incomplete or blocked (the reason is on the line). Implementation alone is not end-to-end validation. The maintained gap list is `docs/validation-gaps.md`; the original's menu-by-menu state is `docs/menu-inventory.md`.
 
 ## Baseline
-- CI run #111 (commit `54c1c7f3`, build 14): 347 tests, 0 failures; signed app, extracted-package check and GUI check passed. Not run on a Mac (the verification Macs were unreachable; the last Mac-verified build is 13 / run #82).
+- CI run #126 (commit `93bce8dc`, build 14): 378 tests, 0 failures; signed app, extracted-package check, GUI check and settings smoke (password, delete and initialise on copies) passed. Not run on a Mac (the verification Macs were unreachable; the last Mac-verified build is 13 / run #82).
 
 ## Inventory / Deep evidence
 - [x] Goal contract, Notion TODO, Craft Anything `--deep` resources/backup/settings/lens/sensor analysis (`docs/deep-full-port.md`).
@@ -28,7 +28,7 @@ Legend: `[x]` verified or explicitly documented; `[ ]` incomplete or blocked (th
 - [ ] AVI beyond 4 GiB with real media and destination-full behaviour.
 
 ## Validation / delivery
-- [x] All earlier tests preserved; 347 passing tests in GitHub Actions (run #111) with adverse inputs.
+- [x] All earlier tests preserved; 378 passing tests in GitHub Actions (run #126) with adverse inputs.
 - [x] Exact build-13 artifact verified on a Mac with real data (run #82).
 - [ ] Exact latest artifact verified on a Mac with real data (pending: no Mac reachable).
 - [x] Intel x86_64 unit tests and packaged-CLI smoke in the manual compatibility workflow (build 10, 126 tests; rerun on the final commit pending).

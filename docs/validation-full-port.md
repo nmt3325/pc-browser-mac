@@ -82,8 +82,15 @@ Exact build-8 native CLI and GUI regression also passed on the same 1,200-frame 
 - Added since build 13 (run #82): the legacy menu bar and 150-item inventory, the 37-model table and automatic model detection, the Q-01 settings editor on copies, event/continuous/history lists, report window/page/CSV, trigger list, history report, journal KML, and the destructive-operation guard. Their evidence is CI plus the original-application comparisons in `validation-history.md`.
 - **No Mac run:** the verification Macs were unreachable after build 13. The exact-artifact checks on a Mac (checksum, commit, signature, real-data lists, reports and KML against the original's files) are pending.
 
+## Build 14 — run #126 (CI only; not run on a Mac)
+
+- Commit `93bce8dcd28be532542623ecda8a7990bc52cca2`, [Actions run #126](https://github.com/nmt3325/pc-browser-mac/actions/runs/43585004649): 378 tests, 0 failures; the signed app was built, the extracted package was verified, the GUI check passed and the settings smoke passed, including its section for 録画データ削除 / 記録設定データ初期化 on synthetic copies (a delete copy that differs from its input in two sectors, a second delete, and an initialise copy that differs in four sectors, each compared with byte-exact expectations).
+- Artifact `PC-Browser-Mac-arm64-126`, app zip digest SHA-256 `139d8e8ae6b80636b0d2ea214dded4f50f3595c43defb39561d574d4b7ddea58`.
+- Added since run #111: the card password (set, change, clear, asked when a card is opened; Q-01 class) and 録画データ削除 / 記録設定データ初期化 on new image copies (`recording-data-operations.md`). Evidence: CI with synthetic cards and the original-application comparisons in `validation-history.md`; nothing was written to a real card and nothing was run on a Mac.
+- **No Mac run:** the verification Macs were still unreachable. The exact-artifact checks on a Mac remain pending.
+
 ## Explicit remaining gaps
 
-See `validation-gaps.md` for the maintained list. In short: Mac runs of the builds after 13; physical SD, camera, printer and Intel/macOS 14 GUI; original factory calibration and pixel equivalence of 360°/NIGHT; multi-camera synchronisation; gyro units and external-input meaning; settings of the five other dialog classes; password, delete, initialise, format and firmware update (guarded, never executed); PC Viewer backups and restoring to a card; Google Earth's display of the KML; Developer ID signing and notarization.
+See `validation-gaps.md` for the maintained list. In short: Mac runs of the builds after 13; physical SD, camera, printer and Intel/macOS 14 GUI; original factory calibration and pixel equivalence of 360°/NIGHT; multi-camera synchronisation; gyro units and external-input meaning; settings of the five other dialog classes; password, delete and initialise exist only for new image copies of Q-01-class cards (the original's reader rule at card generation 2 and above is unexplained; never tried on hardware); format and firmware update (guarded, never executed); PC Viewer backups and restoring to a card; Google Earth's display of the KML; Developer ID signing and notarization.
 
 Private image/media/GPS fixtures and original proprietary binaries remain outside Git and CI. Header-only sparse IMG catalog validation does not demonstrate complete video payload reception.
