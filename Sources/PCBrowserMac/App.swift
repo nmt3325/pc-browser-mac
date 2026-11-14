@@ -191,6 +191,17 @@ final class ScanCancellation: @unchecked Sendable {
         try captureOwnView(historyView,to:folder.appendingPathComponent("history-report.png"))
         model.showHistoryReport=false;model.historyReportOverride=nil;try await Task.sleep(nanoseconds:300_000_000)
         result["history_report"]=["rows":history.rowCount,"data_lines":history.dataLineCount,"pdf_pages":historyDocument.pageCount,"summary_bytes":historySummary.count,"data_bytes":historyData.count,"total_row":history.totalCells] as [String:Any]
+        // ログデータ変換 from the made-up journal: the dialog and the file it would write (nothing is written to disk here).
+        guard let journal=HistoryReportPage.syntheticLog(),let journalKML=JournalKML(log:journal) else{throw BrowserError.io("ログデータ変換の試験データを作成できません")}
+        let kmlData=try journalKML.data()
+        guard Array(kmlData.prefix(3)) == [0xEF,0xBB,0xBF],String(decoding:kmlData.dropFirst(3),as:UTF8.self).hasSuffix("</kml>\r\n"),journalKML.defaultFileName.hasPrefix("YP_20261111_09") else{throw BrowserError.io("ログデータ変換のKMLを検証できません")}
+        let previousLog=model.historyLog;model.historyLog=journal;model.showLogConversion=true
+        for _ in 0..<30{if window?.attachedSheet != nil{break};try await Task.sleep(nanoseconds:100_000_000)}
+        try await Task.sleep(nanoseconds:1_000_000_000)
+        guard let conversionView=window?.attachedSheet?.contentView else{throw BrowserError.io("ログデータ変換ダイアログを表示できません")}
+        try captureOwnView(conversionView,to:folder.appendingPathComponent("log-conversion.png"))
+        model.showLogConversion=false;model.historyLog=previousLog;try await Task.sleep(nanoseconds:300_000_000)
+        result["log_conversion"]=["bytes":kmlData.count,"entries":journalKML.entryCount,"default_file":journalKML.defaultFileName] as [String:Any]
         if CommandLine.arguments.contains("--ui-check-earth") {
             var style=TrackStyle();style.showPoints=true;style.lineRGB="12A4E0";style.pointRGB="E06012";style.alpha=173;style.width=7;style.density=17
             let kml=folder.appendingPathComponent("explicit-earth-\(UUID().uuidString).kml")
