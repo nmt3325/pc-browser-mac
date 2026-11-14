@@ -170,7 +170,8 @@ public enum CatalogScanner {
     /// Header-only catalog. No H.264/PCM payload reads and no persistent cache.
     /// Existing last->first backlinks skip completed 15s blocks. Unlinked blocks
     /// use a bounded forward header walk. Unknown gaps are explicitly recoverable.
-    public static func scan(_ input: any ByteSource, limitBytes: UInt64? = nil,
+    /// `honorDeletion` skips the regions that a 削除／初期化 of the original has hidden (see `RecordingGeneration`); the recovery scan does not.
+    public static func scan(_ input: any ByteSource, limitBytes: UInt64? = nil, honorDeletion: Bool = true,
                             cancelled: () -> Bool = { false },
                             progress: (ImageIndex,Double) -> Void = { _,_ in }) throws -> ImageIndex {
         let source = CatalogMeter(input)
@@ -190,6 +191,20 @@ public enum CatalogScanner {
             regions = [b..<min(c,end)]            // イベント記録のみ: 常時録画領域なし
         } else if b == 0, c == 0, start < a, a <= diskEnd {
             regions = [start..<min(a,end)]        // 常時録画のみ: イベント領域なし
+        }
+        // A region whose data predates the last 削除／初期化 is not listed, exactly like the original. Only positive evidence hides it.
+        var hidden: [HiddenRegion] = [], hiddenStarts = Set<UInt64>()
+        if honorDeletion, layout != nil, let report = RecordingGeneration.report(in: input, controlSector: control.sector) {
+            hidden = report.hidden
+            let table = RecordingRegionTable(sector: [UInt8](controlBytes))
+            for region in hidden {
+                switch region.kind {
+                case .normal: hiddenStarts.insert(UInt64(table.normalStart))
+                case .event: hiddenStarts.insert(UInt64(table.eventStart))
+                case .history: break
+                }
+            }
+            regions = regions.filter { !hiddenStarts.contains($0.lowerBound) }
         }
         let available = source.scanRanges?.map { ($0.lowerBound+511)/512..<($0.upperBound/512) }
         if let available {
@@ -257,7 +272,7 @@ public enum CatalogScanner {
             return ImageIndex(control:control,recordings:RecordingSessions.group(Array(blocks.values),previous:firstPrevious,adoptable:adoptable,eventRegion:layout?.eventRegion),scannedBytes:source.bytes,
                        isPartialScan:limitBytes != nil && end < diskEnd || source.isPartialCopy,rejectedCandidates:rejected,
                        isMetadataCatalog:true,recoveryRecommended:recovery,catalogReadCalls:source.calls,
-                       catalogBoundaryParses:boundaryParses,backlinkBlocks:backward,layout:layout)
+                       catalogBoundaryParses:boundaryParses,backlinkBlocks:backward,layout:layout,hiddenRegions:hidden)
         }
         func publish(_ fraction: Double, force: Bool = false) throws {
             let now = Date.timeIntervalSinceReferenceDate
@@ -265,7 +280,7 @@ public enum CatalogScanner {
         }
         // Single-camera layout: the control stores one metadata sector per camera.
         // Only activate this accelerator when the actual first packet verifies that layout.
-        if try cb.u8(0x14) == 1, present(start+2), let (seed,_) = try? checked(start+2) {
+        if !hiddenStarts.contains(start), try cb.u8(0x14) == 1, present(start+2), let (seed,_) = try? checked(start+2) {
             var cursor = seed.previous, seen = Set<UInt64>()
             while cursor > 0, seen.insert(cursor).inserted, seen.count <= 200_000 {
                 if cancelled() { throw BrowserError.io("索引取得をキャンセルしました") }

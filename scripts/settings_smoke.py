@@ -5,6 +5,9 @@ The image is built here from scratch (nothing from a real card): MBR, a FAT16 pa
 sectors in the layout that was established from the original application, and their backups directly behind the last journal sector.
 The checks re-implement the checksum, the region table and a FAT16 reader independently of the Swift code. The image is a sparse file
 of about 179 MB (a real 168 h history needs that much), so every check reads only the sectors it needs.
+Section 9 covers 録画データ削除 / 記録設定データ初期化 (`--erase-recordings`): the generation byte and region counters change in exactly the
+modelled bytes of a NEW copy, nothing else moves, and the catalog then skips the regions the generation rule hides (all generation values
+here are made up).
 """
 import hashlib
 import json
@@ -104,8 +107,30 @@ def fat16_partition(sectors, fat_sectors=17):
     return bytes(p)
 
 
-def write_image(path):
-    """Writes the sparse synthetic card image: only the sectors that carry data are written."""
+EVENT_START = NORMAL_END + 1
+
+
+def stream_header(magic, own_sector, stamp, generation):
+    """First header of a recording area: stream magic, own sector at 0x1E0, card-generation stamp at 0xA0, ring generation at 0x1F8."""
+    b = bytearray(512)
+    struct.pack_into('<I', b, 0, magic)
+    struct.pack_into('<I', b, 0x1E0, own_sector)
+    b[0xA0] = stamp
+    struct.pack_into('<I', b, 0x1F8, generation)
+    return bytes(b)
+
+
+def journal_head(lap):
+    """First journal record: its magic and the ring lap in the upper half of the dword at 0xC4."""
+    b = bytearray(512)
+    struct.pack_into('<I', b, 0, 0xFFFFE202)
+    struct.pack_into('<I', b, 0xC4, (lap << 16) | 0x0123)
+    return bytes(b)
+
+
+def write_image(path, heads=False):
+    """Writes the sparse synthetic card image: only the sectors that carry data are written.
+    With `heads` the three recording areas also get a head header (made-up stamp 1 and ring generations 5 / 4 / lap 3)."""
     control, channel = factory(FIRST_RECORD)
     mbr = bytearray(512)
     mbr[0x1BE + 4] = 0x06
@@ -121,6 +146,11 @@ def write_image(path):
         for n, data in ((CONTROL, control), (CHANNEL, channel), (BACKUP_CHANNEL, channel), (BACKUP_CONTROL, control)):
             f.seek(n * 512)
             f.write(data)
+        if heads:
+            for n, data in ((FIRST_RECORD, stream_header(0xFFFFD105, FIRST_RECORD, 1, 5)), (EVENT_START, stream_header(0xFFFFD103, EVENT_START, 1, 4)),
+                            (JOURNAL_START, journal_head(3))):
+                f.seek(n * 512)
+                f.write(data)
 
 
 def read_range(path, start, length):
@@ -270,6 +300,155 @@ def sha(data):
 
 def load(path):
     return json.loads(Path(path).read_text())
+
+
+def erase_checks(binary, root, plain_card, plain_hash):
+    """Section 9 of `run`. Expected bytes are computed here from the documented rules, not by the Swift code."""
+    out = {}
+    card = root / 'erase-card.img'
+    write_image(card, heads=True)
+    card_hash = file_sha(card)
+    card.chmod(0o444)
+    control, channel = sector(card, CONTROL), sector(card, CHANNEL)
+    assert checksum_ok(control, channel) and control[0] == 1 and control[0x1FF] == 1
+
+    def counters(c):
+        return [struct.unpack_from('<I', c, o)[0] for o in (0x1E0, 0x1E4, 0x1E8)]
+
+    # 9a. Plan only: the generation goes 1 -> 2 and each counter lands one above the ring generation that was loaded (5 / 4 / lap 3).
+    plan_path = root / 'erase-plan.json'
+    ok(binary, '--erase-recordings', card, '--erase-kind', 'delete', '--plan-only', plan_path)
+    plan = load(plan_path)
+    assert plan['operation'] == 'delete' and plan['dataZeroed'] is False and plan['changesSectors'] is True, plan
+    assert plan['before'] == {'generation': 1, 'counters': [1, 1, 1]} and plan['after'] == {'generation': 2, 'counters': [6, 5, 4]}, plan
+    assert plan['loadedRegions'] == ['常時録画', 'イベント記録', '履歴記録'] and plan['hiddenBefore'] == [], plan
+    assert [p['role'] for p in plan['patches']] == ['control', 'channel', 'controlBackup', 'channelBackup']
+    assert [p['changed'] for p in plan['patches']] == [True, False, True, False], plan['patches']
+    assert plan['patches'][0]['oldSHA256'] == sha(control) and plan['patches'][1]['oldSHA256'] == sha(channel)
+    assert plan['settingsBefore'] == plan['settingsAfter']
+
+    # 9b. Refusals leave no output behind: no confirmation, existing output, the input itself, unknown kind, missing kind / output.
+    target = root / 'erase-refused.img'
+    refused(binary, '--erase-recordings', card, '--erase-kind', 'delete', '--out', target)
+    refused(binary, '--erase-recordings', card, '--erase-kind', 'initialize', '--out', target)
+    refused(binary, '--erase-recordings', card, '--erase-kind', 'format', '--out', target, '--confirm-erase')
+    refused(binary, '--erase-recordings', card, '--out', target, '--confirm-erase')
+    refused(binary, '--erase-recordings', card, '--erase-kind', 'delete', '--confirm-erase')
+    assert not target.exists()
+    keep = root / 'erase-existing.img'
+    keep.write_bytes(b'keep')
+    refused(binary, '--erase-recordings', card, '--erase-kind', 'delete', '--out', keep, '--confirm-erase')
+    assert keep.read_bytes() == b'keep'
+    refused(binary, '--erase-recordings', card, '--erase-kind', 'delete', '--out', card, '--confirm-erase')
+    assert file_sha(card) == card_hash, 'the input image must not change'
+
+    # 9c. Delete: only the control sector and its backup change, in exactly the generation byte, its tail copy, the counters and the checksum.
+    deleted = root / 'erase-delete.img'
+    report = root / 'erase-delete.json'
+    ok(binary, '--erase-recordings', card, '--erase-kind', 'delete', '--out', deleted, '--confirm-erase', '--report', report)
+    assert deleted.stat().st_size == card.stat().st_size and changed_sectors(card, deleted) == {CONTROL, BACKUP_CONTROL}, changed_sectors(card, deleted)
+    want = bytearray(control)
+    want[0x00] = want[0x1FF] = 2
+    for o, v in ((0x1E0, 6), (0x1E4, 5), (0x1E8, 4)):
+        word(want, o, v)
+    want_control, _ = seal(bytes(want), channel)
+    assert sector(deleted, CONTROL) == want_control and sector(deleted, BACKUP_CONTROL) == want_control
+    assert sector(deleted, CHANNEL) == channel and sector(deleted, BACKUP_CHANNEL) == channel
+    assert changed_offsets(control, want_control) - {0x12, 0x13} == {0x00, 0x1E0, 0x1E4, 0x1E8, 0x1FF}
+    done = load(report)
+    assert done['output']['verified'] is True and done['dataZeroed'] is False and done['after']['generation'] == 2, done
+    assert plan['patches'][0]['newSHA256'] == sha(want_control)
+    for n in (FIRST_RECORD, EVENT_START, JOURNAL_START):
+        assert sector(deleted, n) == sector(card, n), 'recorded data must stay where it was'
+    assert file_sha(card) == card_hash, 'the input image must not change'
+    out['delete'] = {'changed_sectors': 2, 'generation_after': 2}
+
+    # 9d. Readers: the original card lists nothing hidden; the deleted copy hides the three areas. The settings stay readable.
+    for name, path in (('before', card), ('after', deleted)):
+        shown = root / ('erase-inspect-%s.json' % name)
+        ok(binary, '--inspect', path, '--catalog-only', '--scan-limit', 8 * 1024 * 1024, '--report', shown)
+        hidden = load(shown)['hidden_regions']
+        if name == 'before':
+            assert hidden == [], hidden
+        else:
+            assert len(hidden) == 3 and hidden[0].startswith('常時録画') and hidden[1].startswith('イベント記録') and hidden[2].startswith('履歴記録'), hidden
+    show = root / 'erase-show-delete.json'
+    ok(binary, '--settings-show', deleted, '--report', show)
+    assert load(show)['generation'] == 6 and load(show)['settings']['mode'] == 'both', load(show)
+    # Deleting again: the three areas are hidden already, so the counters stay and only the generation rises.
+    deleted.chmod(0o444)
+    again = root / 'erase-delete-again.img'
+    again_plan = root / 'erase-delete-again.json'
+    ok(binary, '--erase-recordings', deleted, '--erase-kind', 'delete', '--out', again, '--confirm-erase', '--report', again_plan)
+    rep = load(again_plan)
+    assert rep['loadedRegions'] == [] and len(rep['hiddenBefore']) == 3, rep
+    assert rep['before'] == {'generation': 2, 'counters': [6, 5, 4]} and rep['after'] == {'generation': 3, 'counters': [6, 5, 4]}, rep
+    assert sector(again, CONTROL)[0] == 3 and sector(again, CONTROL)[0x1FF] == 3 and counters(sector(again, CONTROL)) == [6, 5, 4]
+    # A card without head headers has nothing the readers would have loaded: the counters only catch up with the generation.
+    bare = root / 'erase-bare.json'
+    ok(binary, '--erase-recordings', plain_card, '--erase-kind', 'delete', '--plan-only', bare)
+    assert load(bare)['loadedRegions'] == [] and load(bare)['after'] == {'generation': 2, 'counters': [2, 2, 2]}, load(bare)
+    out['delete_again'] = True
+
+    # 9e. Initialize a non-default card (no layout change, so the area heads stay valid): settings, password and layout return to the dialog
+    # defaults, the card ID stays, the first multi-battery byte is reset and the second one is left alone; the generation moves like a delete.
+    init_in = root / 'erase-init-in.img'
+    ok(binary, '--settings-apply', card, '--set', 'fps=2', '--set', 'event=3', '--set', 'audio=off', '--set', 'beep=off', '--set', 'battery=on',
+       '--set', 'id=KEEP', '--set', 'password=2468', '--confirm-password', '2468', '--out', init_in)
+    in_control = sector(init_in, CONTROL)
+    assert in_control[0] == 1 and in_control[0x54] == 1 and in_control[0x97] == 2 and in_control[0x88] == 1
+    init_in.chmod(0o444)
+    init_in_hash = file_sha(init_in)
+    initialised = root / 'erase-init.img'
+    init_report = root / 'erase-init.json'
+    ok(binary, '--erase-recordings', init_in, '--erase-kind', 'initialize', '--out', initialised, '--confirm-erase', '--report', init_report)
+    assert changed_sectors(init_in, initialised) == {CONTROL, CHANNEL, BACKUP_CONTROL, BACKUP_CHANNEL}, changed_sectors(init_in, initialised)
+    journal_start = JOURNAL_END - 24 * 1800 + 1
+    normal_end = journal_start * 71 // 1200 * 12
+    exp = bytearray(control)                    # the factory control sector (the card the non-default one was derived from)
+    exp[0x21:0x29] = bytes([0x0B, 0x10, 0x27, 0x01, 0x1E, 0x00, 0x00, 0x00])           # 30 frames/s, continuous
+    exp[0x29:0x31] = exp[0x31:0x39] = bytes([0x0B, 0x10, 0x27, 0x01, 0x1E, 0x00, 0x2C, 0x01])   # event 10 s + 10 s at 30 frames/s = 300 frames
+    exp[0x3A:0x40] = bytes([2, 2, 2, 1, 3, 1])
+    exp[0x46:0x4B] = bytes([5, 2, 5, 5, 5])
+    exp[0x50] = 3
+    exp[0x54] = 0                                # first multi-battery byte reset ...
+    exp[0x97] = 2                                # ... the second one is left as the card had it
+    exp[0x66:0x6A] = b'KEEP'                     # card ID stays
+    exp[0x88:0x8B] = bytes(3)                    # password cleared
+    for i, v in enumerate((FIRST_RECORD, normal_end, normal_end + 1, journal_start - 1, journal_start, JOURNAL_END)):
+        word(exp, 0x1BE + 4 * i, v)
+    exp[0x00] = exp[0x1FF] = 2
+    for o, v in ((0x1E0, 6), (0x1E4, 5), (0x1E8, 4)):
+        word(exp, o, v)
+    exp_channel = bytearray(channel)
+    exp_channel[0x20:0x39] = exp[0x20:0x39]
+    want_control, want_channel = seal(bytes(exp), bytes(exp_channel))
+    assert sector(initialised, CONTROL) == want_control and sector(initialised, BACKUP_CONTROL) == want_control, 'control sector'
+    assert sector(initialised, CHANNEL) == want_channel and sector(initialised, BACKUP_CHANNEL) == want_channel, 'channel sector'
+    assert init_in.stat().st_size == initialised.stat().st_size
+    for n in (FIRST_RECORD, EVENT_START, JOURNAL_START):
+        assert sector(initialised, n) == sector(card, n), 'recorded data must stay where it was'
+    info = load(init_report)
+    assert info['output']['verified'] is True and info['dataZeroed'] is False and info['after'] == {'generation': 2, 'counters': [6, 5, 4]}, info
+    assert info['settingsBefore']['password'] == 2468 and info['settingsAfter']['password'] is None, info
+    assert (info['settingsAfter']['cardID'], info['settingsAfter']['multiBattery'], info['settingsAfter']['eventWindowIndex']) == ('KEEP', False, 0), info
+    shown = root / 'erase-init-show.json'
+    ok(binary, '--settings-show', initialised, '--report', shown)
+    t = load(shown)
+    s = t['settings']
+    assert t['regionsAreStandard'] is True and (s['mode'], s['frameRateIndex'], s['eventWindowIndex'], s['historyHoursIndex'], s['audio'], s['beep']) == ('both', 0, 0, 0, True, True), t
+    assert (s['password'], s['cardID'], s['multiBattery']) == (None, 'KEEP', False), s
+    gate = cli(binary, '--password-check', initialised)
+    assert gate.returncode == 0 and 'locked=false' in gate.stdout, gate.stdout
+    # The (0, 2) battery pair the initialization leaves behind is read back as "not connected" and a later save keeps its second byte.
+    initialised.chmod(0o444)
+    resaved = root / 'erase-init-resaved.img'
+    ok(binary, '--settings-apply', initialised, '--set', 'beep=off', '--out', resaved)
+    kept = sector(resaved, CONTROL)
+    assert kept[0x54] == 0 and kept[0x97] == 2 and kept[0x50] == 0, (kept[0x54], kept[0x97], kept[0x50])
+    assert file_sha(init_in) == init_in_hash and file_sha(card) == card_hash and file_sha(plain_card) == plain_hash
+    out['initialize'] = {'changed_sectors': 4, 'generation_after': 2}
+    return out
 
 
 def run(binary, root):
@@ -464,6 +643,9 @@ def run(binary, root):
         assert not target.exists(), bad
     assert file_sha(card) == card_hash, 'the input image must not change'
     result['refusals'] = True
+
+    # 9. 録画データ削除 / 記録設定データ初期化: generation byte + region counters (+ settings) on a NEW copy, no recorded data touched.
+    result['erase'] = erase_checks(binary, root, card, card_hash)
 
     # 8. macOS's own FAT checker on the partition after create / delete (informational: recorded, not asserted).
     fsck = shutil.which('fsck_msdos') or '/sbin/fsck_msdos'
