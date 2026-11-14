@@ -9,11 +9,11 @@ final class RecordListTests: XCTestCase {
     /// Event blocks (pre-roll 5, trigger 2, post 3) at records 20/32/44 (and 56/68/80 for a second event, or one more post
     /// block at 56 with `extraPost`); the control sector at 8 names the event region 18..<95 behind a normal region 10..<12.
     /// With one frame per block the two sectors behind the packet are free for a trailer pair.
-    private func eventImage(events: Int = 1, region: Bool = true, serial: UInt32 = 5, frames: Int = 2, extraPost: Bool = false) -> Data {
+    private func eventImage(events: Int = 1, region: Bool = true, serial: UInt32 = 5, frames: Int = 2, extraPost: Bool = false, postOrdinal: UInt32 = 4) -> Data {
         // Without a region table the scan starts at the first record sector and must not meet eight empty sectors.
         let r0: UInt32 = region ? 20 : 10
         // On a real card the packet header byte 8 ("channel") of event packets is the phase, not a camera number.
-        var specs = [Spec(record: r0, root: r0, serial: serial, ordinal: 0, channel: 5, start: true, frames: frames), Spec(record: r0 + 12, root: r0, serial: serial, ordinal: 2, channel: 2, frames: frames), Spec(record: r0 + 24, root: r0, serial: serial, ordinal: 4, channel: 3, frames: frames)]
+        var specs = [Spec(record: r0, root: r0, serial: serial, ordinal: 0, channel: 5, start: true, frames: frames), Spec(record: r0 + 12, root: r0, serial: serial, ordinal: 2, channel: 2, frames: frames), Spec(record: r0 + 24, root: r0, serial: serial, ordinal: postOrdinal, channel: 3, frames: frames)]
         var phases: [UInt8] = [5, 2, 3]
         if events > 1 {
             let r1 = r0 + 36
@@ -62,6 +62,15 @@ final class RecordListTests: XCTestCase {
         XCTAssertEqual(i.continuousRecordings.count, 0)
         XCTAssertEqual(e.eventTime.map { CivilTime.minuteText($0) }, "2026/11/11 20:25")
     }
+    /// The trigger fields sit on the first frame of the post phase, and the original names the event by that frame (its trigger
+    /// list and the report files show seconds); the phase before it starts earlier.
+    func testEventTimeIsTheFirstFrameOfThePostBlock() throws {
+        let i = try CatalogScanner.scan(MemorySource(eventImage(postOrdinal: 34)))
+        let e = try XCTUnwrap(i.recordings.first)
+        XCTAssertEqual(e.blocks.compactMap { $0.metadata?.blockType }, [5, 2, 3])
+        XCTAssertEqual(e.eventTime.map { CivilTime.secondText($0) }, "2026/11/11 20:25:21")
+        XCTAssertEqual(e.blocks[1].first.telemetry.clock.map { CivilTime.secondText($0) }, "2026/11/11 20:25:20")
+    }
     func testSameBlocksWithoutARegionTableKeepThePreviousGrouping() throws {
         let i = try CatalogScanner.scan(MemorySource(eventImage(region: false)))
         XCTAssertNil(i.layout)
@@ -91,7 +100,7 @@ final class RecordListTests: XCTestCase {
             var d = eventImage(frames: 1); trailer(&d, record: 44, flags: flags, mask: mask)
             let src = MemorySource(d), rows = try EventList.entries(CatalogScanner.scan(src), source: src)
             XCTAssertEqual(rows.map(\.trigger), [name], "flags \(flags) mask \(mask)")
-            XCTAssertEqual(rows.first?.timeText, "2026/11/11 20:25:20", "the original list shows seconds, taken from the first frame of the trigger block")
+            XCTAssertEqual(rows.first?.timeText, "2026/11/11 20:25:20", "the time is the first frame of the post block (the same second as the trigger block in this fixture)")
             XCTAssertEqual(rows.first?.blocks, 3)
         }
     }

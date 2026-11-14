@@ -84,8 +84,13 @@ public struct DiskLayout: Sendable, Equatable {
 public extension Recording {
     /// Event recordings are merged from their pre-roll, trigger and post blocks (see `RecordingSessions.group`).
     var isEvent: Bool { id.hasPrefix("event-") }
-    /// The block that contains the trigger moment; a recording without type information starts at its first block.
-    var eventTriggerBlock: RecordBlock? { blocks.first { $0.metadata?.blockType == EventBlockType.trigger } ?? blocks.first }
+    /// The block that carries the trigger moment. The first frame of the post phase is the packet whose header holds the
+    /// trigger fields, and the original names an event by that frame's clock (its trigger list and the report files).
+    /// A recording without a post block falls back to the trigger block, and one without type information to its first block.
+    var eventTriggerBlock: RecordBlock? {
+        blocks.first { $0.metadata?.blockType == EventBlockType.post }
+            ?? blocks.first { $0.metadata?.blockType == EventBlockType.trigger } ?? blocks.first
+    }
     var eventTime: CardTimestamp? { eventTriggerBlock?.first.telemetry.clock }
 }
 
