@@ -15,6 +15,9 @@ public struct CardTimestamp: Sendable, Hashable, Codable {
     public var linearSeconds: Double {
         Double(wholeSeconds)+Double(frameSlot)/Double(max(1,nominalFPS))
     }
+    /// Whole seconds of the device wall clock counted from 1970-01-01 as if it were UTC (no timezone, frame slot left out).
+    /// Differences and multiples of this value are exact integers; 映像抽出 cuts scenes with them.
+    public var epochSeconds: Int64 { wholeSeconds }
     /// Subtract whole seconds before adding frame fractions. Subtracting two
     /// epoch-sized Doubles loses enough precision to create duplicate media PTS.
     public func seconds(since other: CardTimestamp) -> Double {

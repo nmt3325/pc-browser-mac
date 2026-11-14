@@ -83,6 +83,7 @@ import PCBrowserCore
         menu.addItem(.separator())
         menu.addItem(item("間隔指定のページ印刷…", 9016))
         menu.addItem(item("入力全体を新しいIMGへ複製…", 9017))
+        menu.addItem(item("映像抽出（加速度）…", 9040))
         menu.addItem(.separator())
         menu.addItem(item("16方向ビュー（Mac独自の360°表示）", 9018))
         menu.addItem(.separator())
@@ -161,6 +162,7 @@ import PCBrowserCore
         case 307: return model.source != nil || model.index != nil
         case 9017: return model.source != nil && !model.busy && !model.scanning
         case 9002: return model.source != nil && !model.busy && !model.scanning
+        case 9040: return model.index != nil && !model.busy && !model.scanning
         default: return true
         }
     }
@@ -216,6 +218,7 @@ import PCBrowserCore
         case 9015: model.exportLog("gpx")
         case 9016: model.printContactSheet()
         case 9017: model.copyInputImage()
+        case 9040: model.startAccelerationExtraction()
         case 9030: model.legacyModelID = 0
         default:
             if let kind = ViewCommands.kind(commandID: id) { model.performViewCommand(kind) } else { explain(id) }
