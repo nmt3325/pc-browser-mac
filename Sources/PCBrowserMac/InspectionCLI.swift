@@ -207,7 +207,7 @@ enum InspectionCLI {
                 let base=URL(fileURLWithPath:prefix),folder=base.deletingLastPathComponent()
                 try FileManager.default.createDirectory(at:folder,withIntermediateDirectories:true)
                 let projection=try NativeProjection();var modes:[String:[String:Int]]=[:]
-                for mode in ProjectionMode.allCases {
+                for mode in ProjectionMode.metalModes {
                     var s=ProjectionSettings();s.mode=mode;s.night=args.contains("--night");s.view=viewTransform
                     let rendered=try projection.render(image,settings:s,width:960)
                     try MediaExport.still(rendered,to:URL(fileURLWithPath:prefix+"-"+mode.rawValue+".png"))

@@ -137,7 +137,7 @@ struct BrowserView: View {
     }
     private var projectionBar:some View {
         HStack(spacing:9) {
-            Picker("表示",selection:$model.projection.mode){ForEach(ProjectionMode.allCases,id:\.self){Text($0.label).tag($0)}}.frame(width:205)
+            Picker("表示",selection:$model.projection.mode){ForEach(ProjectionMode.allCases.filter{$0 != .frameHistory || model.frameHistoryAvailable || model.projection.mode == .frameHistory},id:\.self){Text($0.label).tag($0)}}.frame(width:205)
             if model.projection.mode != .raw {
                 Text("方向").font(.caption);Slider(value:$model.projection.yaw,in:-180...180).frame(minWidth:60,maxWidth:120)
                 Text("画角").font(.caption);Slider(value:$model.projection.fieldOfView,in:30...150).frame(minWidth:50,maxWidth:100)
