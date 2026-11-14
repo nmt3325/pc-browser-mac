@@ -27,8 +27,9 @@ import PCBrowserCore
     @Published var playbackFPS=30.0
     @Published var playbackRate=1.0 {didSet {if oldValue != playbackRate {pause()}}}
     @Published var reverse=false
-    @Published var volume=0.8 {didSet {audioPlayer?.volume=muted ? 0:Float(volume)}}
-    @Published var muted=false {didSet {audioPlayer?.volume=muted ? 0:Float(volume)}}
+    /// Slider fraction; the original starts at level 33 of 8...58 (50 %) and the player gets the amplitude of its attenuation (PlaybackVolume).
+    @Published var volume=PlaybackVolume.fraction(level: PlaybackVolume.defaultLevel) {didSet {audioPlayer?.volume=muted ? 0:Float(PlaybackVolume.amplitude(fraction: volume))}}
+    @Published var muted=false {didSet {audioPlayer?.volume=muted ? 0:Float(PlaybackVolume.amplitude(fraction: volume))}}
     @Published var audioStatus="音声なし"
     @Published var audioDuration=0.0
     @Published var audioDrift=0.0
@@ -92,6 +93,8 @@ import PCBrowserCore
     private(set) var timeline=RecordingTimeline(packets:[])
     private(set) var audioClip:AudioClip?
     private var audioPlayer:AVAudioPlayer?
+    /// True when the loaded recording has sound (the original's 再生 key behaves differently with and without it).
+    var hasAudioTrack:Bool{audioPlayer != nil}
     private var renderer:FrameRenderer?
     private let projector=PreviewProjector()
     private var cancellation=ScanCancellation(),exportCancellation=ScanCancellation(),selectionCancellation=ScanCancellation(),verificationCancellation=ScanCancellation()
@@ -322,7 +325,7 @@ import PCBrowserCore
             do {
                 let clip=try await Task.detached{guard r.packets.contains(where:{$0.auxiliaryBytes>0}) else{throw BrowserError.unsupported("音声データは記録されていません")};let format=try PCMFormat.recordFormat(source:source,recording:r);return try AudioClip.load(source:source,packets:r.packets,format:format,cancelled:{flag.cancelled})}.value
                 guard selectionGeneration==token,!Task.isCancelled,!flag.cancelled else{return}
-                let player=try AVAudioPlayer(data:clip.wav());player.enableRate=true;player.volume=muted ? 0:Float(volume)
+                let player=try AVAudioPlayer(data:clip.wav());player.enableRate=true;player.volume=muted ? 0:Float(PlaybackVolume.amplitude(fraction: volume))
                 guard player.prepareToPlay() else{throw BrowserError.io("macOSの音声再生を準備できません")}
                 audioClip=clip;audioPlayer=player;audioDuration=clip.duration;audioDrift=clip.duration-timeline.duration
                 audioStatus=clip.format.description+String(format:" · %.2f秒 · 内部ブロック同期",clip.duration)
