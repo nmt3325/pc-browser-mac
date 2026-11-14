@@ -1,17 +1,19 @@
 import Foundation
 
-/// The three lists of the original Windows viewer.
-/// 履歴記録 = the playable video sessions found in the normal region (this app's session list),
-/// イベント記録 = the three-block event recordings of the event region,
-/// 常時録画 = the per-second E202 journal that the control sector places behind the event region.
+/// The three lists of the original Windows viewer, in the original's tab order (verified against the running original:
+/// the tabs read イベント記録 | 常時録画 | 履歴記録).
+/// イベント記録 = the three-block event recordings of the event region;
+/// 常時録画 = the playable video sessions found in the normal region (this app's session list);
+/// 履歴記録 = the per-second E202 journal that the control sector places behind the event region
+/// (log only: the original enables 設定変更, バックアップ, ログ変換 and レポート表示 for it, never the video commands).
 public enum RecordListKind: String, CaseIterable, Sendable, Identifiable {
-    case history, event, normal
+    case event, continuous, history
     public var id: String { rawValue }
     public var title: String {
         switch self {
-        case .history: return "履歴記録"
         case .event: return "イベント記録"
-        case .normal: return "常時録画"
+        case .continuous: return "常時録画"
+        case .history: return "履歴記録"
         }
     }
 }
@@ -22,7 +24,7 @@ extension RecordListKind {
     public init?(commandID: Int) {
         switch commandID {
         case 301: self = .event
-        case 302: self = .normal
+        case 302: self = .continuous
         case 303: self = .history
         default: return nil
         }
@@ -30,7 +32,7 @@ extension RecordListKind {
     public var commandID: Int {
         switch self {
         case .event: return 301
-        case .normal: return 302
+        case .continuous: return 302
         case .history: return 303
         }
     }
@@ -245,145 +247,5 @@ public enum EventList {
             let x = a.element.time?.linearSeconds ?? .infinity, y = b.element.time?.linearSeconds ?? .infinity
             return x == y ? a.offset < b.offset : x < y
         }.map { $0.element }
-    }
-}
-
-// MARK: - Per-second journal (常時録画)
-
-public struct HistoryRow: Identifiable, Sendable, Equatable {
-    public enum Kind: String, Sendable { case session, marker }
-    public let id: Int
-    public let kind: Kind
-    /// Seconds of the GPS-synchronised clock A (the time shown by the original list).
-    public let start: Int64
-    /// Seconds of the free-running clock B, which the video packets carry; used to find the matching video.
-    public let videoClockStart: Int64
-    public let duration: Int
-    public let records: Int
-    public let deviceID: String?
-    public var startText: String { CivilTime.minuteText(start) }
-    public var durationText: String { duration < 60 ? "\(duration)秒" : "\(duration / 60)分" }
-    public var videoClockEnd: Int64 { videoClockStart + Int64(duration) }
-}
-
-public struct HistoryLog: Sendable, Equatable {
-    public let rows: [HistoryRow]
-    public let newestSlot: Int
-    public let sampleRecords: Int, markerRecords: Int, emptyRecords: Int, otherRecords: Int
-    public var slotCount: Int { sampleRecords + markerRecords + emptyRecords + otherRecords }
-
-    static let invalid = Int64.min
-    struct Slot { var kind: UInt8; var a: Int64; var b: Int64 }
-
-    /// Rules measured on a full 604,800-record journal against the original list
-    /// (514 of 516 runs give the identical start and 511 of 512 the identical duration; see docs/validation-history.md):
-    /// - the newest record has the greatest clock B; the ring is read oldest-first from the slot after it;
-    /// - a row is a run of consecutive per-second (E202) records;
-    /// - start = clock A of the first record, one second earlier when A equals B (unsynchronised clock);
-    /// - duration = (A last - A first) + 2 seconds, or n + 1 (+1 if more backward than forward jumps) when A jumps;
-    /// - a four- or five-slot gap holding one lone marker is a one-second row.
-    static func build(slots: [Slot], device: (Int) -> String?) -> HistoryLog? {
-        let n = slots.count
-        guard n > 1 else { return nil }
-        var newest = -1, best = invalid
-        for i in 0..<n where slots[i].kind == 2 && slots[i].b != invalid && slots[i].b > best { best = slots[i].b; newest = i }
-        guard newest >= 0 else { return nil }
-        func at(_ p: Int) -> Slot { slots[(newest + 1 + p) % n] }
-        var runs: [(first: Int, last: Int)] = []
-        var p = 0
-        while p < n {
-            if at(p).kind == 2 {
-                var q = p
-                while q + 1 < n && at(q + 1).kind == 2 { q += 1 }
-                runs.append((p, q)); p = q + 1
-            } else { p += 1 }
-        }
-        var rows: [HistoryRow] = []
-        for (k, run) in runs.enumerated() {
-            if k > 0 {
-                let lo = runs[k - 1].last + 1, hi = run.first - 1
-                let end = at(lo)
-                if hi - lo + 1 >= 4, end.kind == 1, end.a != invalid, end.b != invalid,
-                   let lone = (lo + 1..<hi).map({ at($0) }).first(where: { $0.kind == 1 && $0.a != invalid && $0.b != invalid }) {
-                    let time = lone.a != lone.b ? lone.a : lone.b - (end.b - end.a)
-                    rows.append(HistoryRow(id: rows.count, kind: .marker, start: time, videoClockStart: lone.b, duration: 1, records: 1, deviceID: device((newest + 1 + runs[k - 1].last) % n)))
-                }
-            }
-            let f = at(run.first), l = at(run.last), count = run.last - run.first + 1
-            guard f.a != invalid else { continue }
-            var backward = 0, forward = 0
-            if count > 1 {
-                for j in (run.first + 1)...run.last {
-                    let x = at(j - 1).a, y = at(j).a
-                    guard x != invalid, y != invalid else { continue }
-                    if y < x { backward += 1 } else if y - x >= 60 { forward += 1 }
-                }
-            }
-            let duration = backward == 0 && forward == 0 && l.a != invalid ? Int(l.a - f.a) + 2 : count + 1 + (backward > forward ? 1 : 0)
-            rows.append(HistoryRow(id: rows.count, kind: .session, start: f.a != f.b ? f.a : f.a - 1, videoClockStart: f.b != invalid ? f.b : f.a,
-                                   duration: duration, records: count, deviceID: device((newest + 1 + run.first) % n)))
-        }
-        return HistoryLog(rows: rows, newestSlot: newest, sampleRecords: slots.filter { $0.kind == 2 }.count,
-                          markerRecords: slots.filter { $0.kind == 1 }.count, emptyRecords: slots.filter { $0.kind == 0 }.count,
-                          otherRecords: slots.filter { $0.kind == 3 }.count)
-    }
-
-    /// Reads the whole journal area in 4 MiB steps. Returns nil when the source does not contain all of it
-    /// (partial copies, Windows BAK) or when no per-second record has a valid clock.
-    public static func read(source: any ByteSource, area: Range<UInt64>, cancelled: () -> Bool = { false }) throws -> HistoryLog? {
-        let sectors = area.upperBound - area.lowerBound
-        guard sectors > 0, sectors < 2_000_000 else { return nil }
-        let total = Int(sectors) * 2
-        let begin = area.lowerBound * 512, end = area.upperBound * 512
-        guard total > 1, end <= source.byteCount else { return nil }
-        if let ranges = source.scanRanges, !ranges.contains(where: { $0.lowerBound <= begin && $0.upperBound >= end }) { return nil }
-        var slots: [Slot] = []
-        slots.reserveCapacity(total)
-        var offset = begin
-        while offset < end {
-            if cancelled() { throw BrowserError.io("常時録画の読み込みをキャンセルしました") }
-            let count = Int(min(UInt64(4 * 1024 * 1024), end - offset))
-            let data = try source.read(at: offset, count: count)
-            data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
-                var o = 0
-                while o + 256 <= raw.count {
-                    let magic = raw.loadUnaligned(fromByteOffset: o, as: UInt32.self).littleEndian
-                    switch magic {
-                    case 0xFFFFE202, 0xFFFFE201:
-                        let a = clock(raw, o + 0x0E), b = clock(raw, o + 0x1E)
-                        slots.append(Slot(kind: magic == 0xFFFFE202 ? 2 : 1, a: a != invalid ? a : b, b: b != invalid ? b : a))
-                    case 0: slots.append(Slot(kind: 0, a: invalid, b: invalid))
-                    default: slots.append(Slot(kind: 3, a: invalid, b: invalid))
-                    }
-                    o += 256
-                }
-            }
-            offset += UInt64(count)
-        }
-        return build(slots: slots) { slot in
-            guard let d = try? source.read(at: begin + UInt64(slot) * 256 + 0x9A, count: 10), d.count == 10,
-                  d.allSatisfy({ ($0 >= 0x30 && $0 <= 0x39) || ($0 >= 0x41 && $0 <= 0x5A) }) else { return nil }
-            return String(decoding: d, as: UTF8.self)
-        }
-    }
-
-    private static func clock(_ raw: UnsafeRawBufferPointer, _ o: Int) -> Int64 {
-        let year = 2000 + Int(raw[o]), month = Int(raw[o + 1]), day = Int(raw[o + 2])
-        let hour = Int(raw[o + 3]), minute = Int(raw[o + 4]), second = Int(raw[o + 5])
-        guard CivilTime.isValid(year: year, month: month, day: day, hour: hour, minute: minute, second: second) else { return invalid }
-        return CivilTime.seconds(year: year, month: month, day: day, hour: hour, minute: minute, second: second)
-    }
-}
-
-public extension HistoryLog {
-    /// The video session whose clock-B span overlaps the row (small tolerance for second rounding), if any.
-    func matchingRecording(for row: HistoryRow, in recordings: [Recording]) -> Recording? {
-        let lo = row.videoClockStart - 2, hi = row.videoClockEnd + 2
-        return recordings.first { r in
-            guard !r.isEvent, let a = r.blocks.first?.first.telemetry.clock, let b = r.blocks.last?.last.telemetry.clock else { return false }
-            let s = CivilTime.seconds(year: a.year, month: a.month, day: a.day, hour: a.hour, minute: a.minute, second: a.second)
-            let e = CivilTime.seconds(year: b.year, month: b.month, day: b.day, hour: b.hour, minute: b.minute, second: b.second)
-            return s <= hi && e >= lo
-        }
     }
 }

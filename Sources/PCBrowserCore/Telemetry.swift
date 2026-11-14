@@ -47,12 +47,16 @@ public enum DeviceGeodesy {
     /// Same ellipsoids, 1/600000 degree units and (-147,+506,+687)m translation
     /// observed in original Windows VA 0x56DE20. This is NOT a generic Japan datum preset.
     public static func coordinate(latitude rawLat: Int32, longitude rawLon: Int32, altitudeRaw: Int16, datum: GPSDatum) -> GeoCoordinate? {
+        coordinate(latitude: rawLat, longitude: rawLon, altitudeMillimetres: Int32(altitudeRaw), datum: datum)
+    }
+    /// The per-second journal (履歴記録) stores the altitude as a 32-bit millimetre value; the video packets keep a 16-bit one.
+    public static func coordinate(latitude rawLat: Int32, longitude rawLon: Int32, altitudeMillimetres: Int32, datum: GPSDatum) -> GeoCoordinate? {
         let lat = Double(rawLat)/600000, lon = Double(rawLon)/600000
         let initial = GeoCoordinate(latitude:lat,longitude:lon)
         guard initial.valid else { return nil }
         if datum == .wgs84 { return initial }
         let a = 6377397.155, b = 6356078.962818188, a2 = 6378137.0, b2 = 6356752.314245179
-        let phi = lat * .pi/180, lam = lon * .pi/180, h = Double(altitudeRaw)*0.001
+        let phi = lat * .pi/180, lam = lon * .pi/180, h = Double(altitudeMillimetres)*0.001
         let e = (a*a-b*b)/(a*a), n = a/sqrt(1-e*sin(phi)*sin(phi))
         let x = (n+h)*cos(phi)*cos(lam)-147, y = (n+h)*cos(phi)*sin(lam)+506
         let z = (n*(1-e)+h)*sin(phi)+687, p = hypot(x,y)
