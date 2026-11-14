@@ -16,7 +16,9 @@ final class NativeVideoDecoder {
     private let lock = NSLock()
     private var output: CVPixelBuffer?
     private var callbackStatus: OSStatus = 0
-    private let context = CIContext()
+    /// One Core Image context for the whole process: making a context is slow, and a new decoder is made at every seek and at every
+    /// keyframe that playback reaches after skipping frames. (`CIContext` is safe to share between threads.)
+    private static let context = CIContext()
     deinit { if let session { VTDecompressionSessionInvalidate(session) } }
 
     private func configure(_ units: [Data]) throws {
@@ -45,7 +47,11 @@ final class NativeVideoDecoder {
         guard rc == noErr, let decoder else { throw BrowserError.unsupported("macOSの映像デコーダーを作成できません (\(rc))") }
         session = decoder
     }
-    func decode(_ data: Data, ordinal: Int, fps: Int) throws -> CGImage {
+    /// Decodes one frame and converts it to a picture.
+    func decode(_ data: Data, ordinal: Int, fps: Int) throws -> CGImage { try picture(of: decodeBuffer(data, ordinal: ordinal, fps: fps)) }
+    /// Decodes one frame without making a picture of it. The decoder needs every frame in order, but a frame that is skipped on screen
+    /// only has to be decoded (see `FrameDecodePlan`).
+    func decodeBuffer(_ data: Data, ordinal: Int, fps: Int) throws -> CVPixelBuffer {
         let units = AnnexB.units(data)
         if AnnexB.isPictureless(data, units: units) { throw VideoUnavailableError() }
         if session == nil { try configure(units) }
@@ -73,8 +79,11 @@ final class NativeVideoDecoder {
             lock.lock(); image = output; status = callbackStatus; lock.unlock()
         }
         guard status == noErr, let image else { throw BrowserError.unsupported("この映像フレームを表示できません (\(status))") }
-        let ci = CIImage(cvPixelBuffer: image)
-        guard let cg = context.createCGImage(ci, from: ci.extent) else { throw BrowserError.io("映像を画面へ変換できません") }
+        return image
+    }
+    func picture(of buffer: CVPixelBuffer) throws -> CGImage {
+        let ci = CIImage(cvPixelBuffer: buffer)
+        guard let cg = Self.context.createCGImage(ci, from: ci.extent) else { throw BrowserError.io("映像を画面へ変換できません") }
         return cg
     }
 }
@@ -86,10 +95,13 @@ actor FrameRenderer {
     private var decoder: NativeVideoDecoder?
     private var last = -1
     private var cached: CGImage?
+    /// The frame `cached` is the picture of. It can be older than `last` after frames were decoded without making pictures.
+    private var cachedIndex = -1
+    private static let cachedFrames = 12
     // Reverse/step-back must not construct a new VT/CI session for every
     // previously displayed frame. Bound decoded memory independently of the
     // recording length (a 2560x1080 BGRA frame costs about 10.5 MiB).
-    private var recentFrames = FrameCache<CGImage>(maximumBytes: 96 * 1024 * 1024, maximumCount: 12)
+    private var recentFrames = FrameCache<CGImage>(maximumBytes: 96 * 1024 * 1024, maximumCount: FrameRenderer.cachedFrames)
     init(source: any ByteSource, packets: [FramePacket]) {
         self.source = source; self.packets = packets
         fps = max(1, packets.compactMap { $0.telemetry.clock?.nominalFPS }.first ?? 30)
@@ -99,22 +111,28 @@ actor FrameRenderer {
         // A cache hit does not move `last`: it describes the decoder's state,
         // not the frame currently displayed by the UI.
         if let image = recentFrames.value(at: index) { return image }
-        if index == last, let cached { return cached }
+        if index == cachedIndex, let cached { return cached }
         guard let start = stride(from: index, through: 0, by: -1).first(where: { packets[$0].isIntra }) else {
             throw BrowserError.unsupported("直前のIフレームが見つかりません。次の録画を選択してください")
         }
-        // Audio-clock playback may skip display frames. Reuse the decoder while
-        // advancing through those P frames instead of repeatedly decoding the GOP.
-        // A later keyframe still makes a large forward seek inexpensive.
-        if decoder == nil || index < last || start > last + 1 {
-            decoder = NativeVideoDecoder(); last = start - 1; cached = nil
+        // Audio-clock playback may skip display frames. Reuse the decoder while advancing through those P frames instead of repeatedly
+        // decoding the GOP, and only convert the frames that are shown or can be reused (see `FrameDecodePlan`). A later keyframe still
+        // makes a large forward seek inexpensive.
+        let plan = FrameDecodePlan.make(target: index, lastDecoded: last, keyframe: start, hasDecoder: decoder != nil, cacheCapacity: Self.cachedFrames)
+        if plan.restart {
+            decoder = NativeVideoDecoder(); last = plan.decodeFrom - 1; cached = nil; cachedIndex = -1
         }
         var result: CGImage?
-        for i in (last+1)...index {
+        for i in plan.decodeFrom...index {
             let p = packets[i]
             let data = try source.read(at: p.payloadOffset, count: p.videoBytes)
+            if i < plan.convertFrom {
+                _ = try decoder!.decodeBuffer(data, ordinal: i, fps: fps)
+                last = i
+                continue
+            }
             let image = try decoder!.decode(data, ordinal: i, fps: fps)
-            result = image; last = i; cached = image
+            result = image; last = i; cached = image; cachedIndex = i
             let cost = image.bytesPerRow.multipliedReportingOverflow(by: image.height)
             if !cost.overflow { recentFrames.insert(image, at: i, bytes: cost.partialValue) }
         }
