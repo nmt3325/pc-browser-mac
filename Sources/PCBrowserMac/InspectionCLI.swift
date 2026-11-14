@@ -312,6 +312,21 @@ enum InspectionCLI {
                 } else { lists["journal"]="unavailable" }
                 report["record_lists"]=lists
             }
+            if let dir=value("--legacy-history-report-dir",in:args) {
+                // 履歴記録レポート: the 集計 and データ CSV pair (code page 932) of the per-second journal, written into a new folder only.
+                guard let area=result.layout?.history,let log=try HistoryLog.read(source:source,area:area) else{throw BrowserError.invalid("この入力には読み取れる履歴記録がありません")}
+                var selection=Set<Int>()
+                if let spec=value("--history-rows",in:args) {
+                    let parts=spec.split(separator:"-").compactMap{Int($0)}
+                    guard parts.count==2,parts[0]>=1,parts[0]<=parts[1] else{throw BrowserError.invalid("--history-rows は 開始-終了（1始まりの行番号）で指定します")}
+                    selection=Set((parts[0]-1)...(parts[1]-1))
+                }
+                guard let historyReport=LegacyHistoryReport(log:log,rows:selection) else{throw BrowserError.invalid("レポートにする行がありません")}
+                let files=try ReportFiles.writeCSV(history:historyReport,to:URL(fileURLWithPath:dir,isDirectory:true),protecting:[url])
+                let sizes=try files.map{try FileManager.default.attributesOfItem(atPath:$0.path)[.size] as? Int ?? 0}
+                report["legacy_history_report"]=["files":files.map(\.lastPathComponent),"bytes":sizes,"rows":historyReport.rowCount,"first_row":historyReport.first+1,"last_row":historyReport.last+1,
+                    "data_lines":historyReport.dataLineCount,"total_row":historyReport.totalCells] as [String:Any]
+            }
             report["total_seconds"] = ProcessInfo.processInfo.systemUptime-began
             report["input_size_and_mtime_unchanged"] = before == (try snapshot(url))
             let bytes=try JSONSerialization.data(withJSONObject:report,options:[.prettyPrinted,.sortedKeys])
