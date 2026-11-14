@@ -33,9 +33,11 @@ public struct RecordingSettings: Equatable, Sendable {
     public var accelerationSensitivity = 5
     public var steeringSensitivity = 5
     public var cardID = ""
+    /// The card's four-digit password (1000～9999); nil = none. Stored behind the card ID, see `CardPassword`.
+    public var password: Int?
     public init() {}
 
-    /// State of a factory-fresh card (the dialog's 「初期設定に戻す」).
+    /// State of a factory-fresh card. NOT what the dialog's 「初期設定に戻す」 produces: see `resettingToDialogDefaults()`.
     public static let factoryDefault = RecordingSettings()
     /// Longest card ID the original dialog accepts (longer text makes it refuse the save).
     public static let maxCardIDLength = RecordingSettingsTables.maxCardIDLength
@@ -53,6 +55,19 @@ public struct RecordingSettings: Equatable, Sendable {
             // The card keeps no sensitivity while the G sensor is off (all four bytes are zero).
             s.easyMode = false; s.shockSensitivity = 5; s.accelerationSensitivity = 5; s.steeringSensitivity = 5
         }
+        return s
+    }
+    /// What the original's 「初期設定に戻す」 sets (observed with every control changed first): 常時＋イベント, 30コマ/秒, イベント記録時間 10+10秒,
+    /// 音声あり, 履歴24時間・標準コマ数, 3つの上書きとビープ音あり, Gセンサーあり・簡単設定・感度5。SDカードID・パスワード・マルチバッテリーは触りません
+    /// （日時・設置角度検出のチェックは外れます: `RecordingSettingsDraft.resettingToDialogDefaults()`）。
+    /// 工場出荷カードの値（イベント30+30秒・履歴168時間）とはイベント記録時間と履歴記録時間が異なります。
+    public func resettingToDialogDefaults() -> RecordingSettings {
+        var s = RecordingSettings()
+        s.eventWindowIndex = 0
+        s.historyHoursIndex = 0
+        s.cardID = cardID
+        s.password = password
+        s.multiBatteryConnected = multiBatteryConnected
         return s
     }
     /// In easy mode the single 感度 slider sets all three values.
@@ -76,6 +91,7 @@ public struct RecordingSettings: Equatable, Sendable {
         for v in [shockSensitivity, accelerationSensitivity, steeringSensitivity] where !(1...9).contains(v) {
             throw BrowserError.invalid("感度は1〜9で指定してください")
         }
+        if let p = password, !CardPassword.range.contains(p) { throw BrowserError.invalid(CardPassword.Message.outOfRange) }
         guard cardID.utf8.count <= RecordingSettingsTables.maxCardIDLength,
               cardID.utf8.allSatisfy({ (0x21...0x7E).contains($0) }) else {
             throw BrowserError.invalid("SDカードIDは半角の英数字・記号で\(RecordingSettingsTables.maxCardIDLength)文字以内にしてください")
@@ -101,6 +117,7 @@ public struct RecordingSettings: Equatable, Sendable {
         if accelerationSensitivity != other.accelerationSensitivity { d.append("急発進・急ブレーキ感度") }
         if steeringSensitivity != other.steeringSensitivity { d.append("急ハンドル感度") }
         if cardID != other.cardID { d.append("SDカードID") }
+        if password != other.password { d.append("パスワード") }
         return d
     }
     /// Changing these rewrites the region table, which is what makes the original ask whether to erase the recordings.
@@ -226,7 +243,9 @@ public enum RecordingSettingsCodec {
         static let overwriteContinuous = 0x3A, overwriteEvent = 0x3B, overwriteHistory = 0x3C
         static let recordMode = 0x3E, audio = 0x3F
         static let gSensor = 0x46, easy = 0x47, shock = 0x48, acceleration = 0x49, steering = 0x4A
-        static let beep = 0x50, batteryA = 0x54, cardID = 0x66, cardIDEnd = 0x90, historyRate = 0x90, batteryB = 0x97
+        static let beep = 0x50, batteryA = 0x54, cardID = 0x66, cardIDEnd = 0x88, historyRate = 0x90, batteryB = 0x97
+        /// Password flag and word follow the card ID text (CardPassword); the five bytes up to the history-rate byte stay zero.
+        static let passwordFlag = CardPassword.flagOffset, passwordEnd = 0x8B, reservedEnd = 0x90
         static let generationCounters = [0x1E0, 0x1E4, 0x1E8], generationTail = 0x1FF
     }
 
@@ -316,6 +335,9 @@ public enum RecordingSettingsCodec {
         let text = idBytes.prefix(while: { $0 != 0 })
         guard idBytes.dropFirst(text.count).allSatisfy({ $0 == 0 }), text.allSatisfy({ (0x21...0x7E).contains($0) }) else { throw BrowserError.unsupported("SDカードIDの形式を認識できません") }
         s.cardID = String(decoding: text, as: UTF8.self)
+        let passwordWord = UInt16(c[CardPassword.wordOffset]) | UInt16(c[CardPassword.wordOffset + 1]) << 8
+        s.password = try CardPassword.decode(flag: c[Offset.passwordFlag], word: passwordWord)
+        guard c[Offset.passwordEnd..<Offset.reservedEnd].allSatisfy({ $0 == 0 }) else { throw BrowserError.unsupported("パスワード領域の後ろに想定外の値があります") }
 
         let regions = RecordingRegionTable(sector: c)
         let sectors = Int64(regions.journalEnd) - Int64(regions.journalStart) + 1
@@ -364,7 +386,8 @@ public enum RecordingSettingsCodec {
         c[Offset.batteryA] = s.multiBatteryConnected ? 1 : 0
         c[Offset.batteryB] = s.multiBatteryConnected ? 2 : 0
         let id = Array(s.cardID.utf8)
-        for i in Offset.cardID..<Offset.cardIDEnd { c[i] = i - Offset.cardID < id.count ? id[i - Offset.cardID] : 0 }
+        for i in Offset.cardID..<Offset.reservedEnd { c[i] = i < Offset.cardIDEnd && i - Offset.cardID < id.count ? id[i - Offset.cardID] : 0 }
+        for (k, b) in CardPassword.encode(s.password).enumerated() { c[Offset.passwordFlag + k] = b }
         let layoutChanged = s.changesLayout(from: old.settings)
         if layoutChanged {
             guard old.regionsAreStandard else { throw BrowserError.unsupported("領域表がこの版の既知の計算式と一致しないため、記録モード・履歴の変更は書き込めません") }

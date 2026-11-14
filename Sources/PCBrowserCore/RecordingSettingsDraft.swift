@@ -39,6 +39,17 @@ public struct RecordingSettingsDraft: Equatable, Sendable {
         self.init(settings: settings, timeEnabled: state.timeFileExists, time: initial, angleDetection: state.angleDetectionRequested)
     }
 
+    /// 「初期設定に戻す」: the recording settings of `RecordingSettings.resettingToDialogDefaults()`, and both command rows unticked
+    /// (observed in the original; the date picker keeps its value, disabled).
+    public func resettingToDialogDefaults() -> RecordingSettingsDraft {
+        RecordingSettingsDraft(settings: settings.resettingToDialogDefaults(), timeEnabled: false, time: time, angleDetection: false)
+    }
+
+    /// What the original asks about the password before it offers to save (re-entry for a new or changed one, confirmation for clearing).
+    public func passwordCheck(against original: RecordingSettings) -> CardPassword.Change {
+        CardPassword.Change.required(old: original.password, new: settings.password)
+    }
+
     /// Files to create, rewrite or delete so that the card's CONFIG folder matches the two rows. Empty when the card has no readable
     /// FAT16 volume (`commands == nil`) or when the rows already match.
     public func commandFiles(from commands: CardCommandState?) -> [CardCommandFile] {
