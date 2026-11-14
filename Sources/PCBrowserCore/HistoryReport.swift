@@ -11,7 +11,6 @@ public struct LegacyHistoryReport: Sendable {
     public static let columnTitles: [String] = summaryHeader.split(separator: ",").map { String($0) }
     /// Trigger bits of the journal record in the order the original tests them; the first set bit names the line.
     static let triggerNames: [(mask: UInt8, text: String)] = [(0x01, "衝撃"), (0x02, "急発進/急ブレーキ"), (0x04, "急ハンドル"), (0x08, "急旋回"), (0x10, "ワンタッチ")]
-    private static let posix = Locale(identifier: "en_US_POSIX")
 
     let log: HistoryLog
     /// First and last row (inclusive, indexes into `log.rows`).
@@ -46,7 +45,9 @@ public struct LegacyHistoryReport: Sendable {
     }
     /// Hours, minutes and seconds; the hours grow beyond two digits for long totals.
     public static func clockText(seconds s: Int) -> String { String(format: "%02d:%02d:%02d", s / 3600, s / 60 % 60, s % 60) }
-    static func decimal(_ value: Double, _ digits: Int) -> String { String(format: "%.\(digits)f", locale: posix, value) }
+    /// `%.nf` of the C library: the decimal expansion of the exact binary value, rounded half-even. A `locale:` argument would
+    /// make Foundation round the shortest decimal form instead (1.85 gives 1.8, the original prints 1.9).
+    static func decimal(_ value: Double, _ digits: Int) -> String { String(format: "%.\(digits)f", value) }
     static func triggerText(_ bits: UInt8) -> String { triggerNames.first { bits & $0.mask != 0 }?.text ?? "" }
 
     /// `<first row start>_<last row end>_履歴記録レポート` (yyyyMMddHHmmss clocks).

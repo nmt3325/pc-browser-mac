@@ -160,7 +160,8 @@ public struct LegacyReport: Sendable {
         return String(format: "%02d秒", sec)
     }
     private static func decimal(_ value: Double, _ digits: Int) -> String {
-        String(format: "%.\(digits)f", locale: Locale(identifier: "en_US_POSIX"), value)
+        // No locale: Foundation then uses the C library's exact rounding like the original (a locale rounds the shortest decimal form).
+        String(format: "%.\(digits)f", value)
     }
     /// The dialog strings: "平均速度 14.8 km/h", "最高速度 55 km/h" ("--.-" and "--" when there is no row).
     public var averageSpeedText: String { "平均速度 " + (averageSpeed.map { Self.decimal($0, 1) } ?? "--.-") + " km/h" }

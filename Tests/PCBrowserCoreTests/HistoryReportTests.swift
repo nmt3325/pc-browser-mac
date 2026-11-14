@@ -206,6 +206,24 @@ final class HistoryReportTests: XCTestCase {
         XCTAssertEqual(lines[2], "2026/05/01,09:00:02,2026/05/01,09:00:01,36,0.00,0.00,0.00,35.003345,138.996973,0.0,3D測位,,,YQA1018762")
     }
 
+    /// printf rounds the exact binary value of a decimal fraction: 1.85, 60.45, 52.45 and 48.45 are stored a little above the
+    /// decimal and give 1.9, 60.5, 52.5 and 48.5, while the mean 247.35 is stored a little below it and gives 247.3. Rounding
+    /// the shortest decimal form instead (what Foundation does with a locale) would give 1.8, 60.4, 52.4, 48.4 and 247.4.
+    func testOneDecimalFiguresRoundTheExactBinaryValueLikePrintf() throws {
+        var seq = (0..<20).map { sample($0) }
+        for i in 0..<20 { seq[i].speed = i == 19 ? 7056 : 6862 }
+        for (i, heading) in [UInt32(185_000), 6_045_000, 5_245_000, 4_845_000].enumerated() { seq[i].heading = heading }
+        let r = try report(JournalImage.make(ring: 20, firstSlot: 6, seq))
+        XCTAssertEqual(r.summaryCSV(), summary([
+            "2026/05/01,09:00:01~09:00:20,00:00:19,0.000,247.3,254,0,0,0,0,0,",
+            "合計,,00:00:19,0.000,,,0,0,0,0,0,"]))
+        XCTAssertEqual(r.fileStem, "20260501090001_20260501090020_履歴記録レポート")
+        let lines = try dataLines(r)
+        XCTAssertEqual(lines[1], "2026/05/01,09:00:01,2026/05/01,09:00:00,247,0.00,0.00,0.00,0.000000,0.000000,1.9,3D測位,,,YQA1018762")
+        let headings = (1...4).map { lines[$0].split(separator: ",", omittingEmptySubsequences: false)[10] }
+        XCTAssertEqual(headings.map(String.init), ["1.9", "60.5", "52.5", "48.5"])
+    }
+
     // MARK: files
 
     func testFilesAreCodePage932WithLFLineEndsAndTheFullWidthRangeMark() throws {
