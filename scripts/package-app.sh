@@ -28,6 +28,7 @@ done
 python3 scripts/ci-smoke.py "$EXTRACTED/Contents/MacOS/PCBrowserMac" "$PWD/dist/ci-smoke.json"
 git archive --format=zip --prefix="pc-browser-mac-$VERSION/" --output="$SOURCE" HEAD
 python3 - "$APP" "$ARCH" "$VERSION" <<'PY'
+# coding: utf-8
 import hashlib, json, os, plistlib, re, subprocess, sys, zipfile
 from pathlib import Path
 app, arch, version = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
@@ -58,18 +59,27 @@ metadata = {'version': version, 'bundle_build': plistlib.loads((app / 'Contents/
             'notarized': False, 'real_media_GUI_and_physical_SD_retested_in_CI': False,
             'zip_files': [{'file': p.name, 'bytes': p.stat().st_size, 'sha256': hashlib.sha256(p.read_bytes()).hexdigest()} for p in sorted(dist.glob('*.zip'))]}
 (dist / 'build-metadata.json').write_text(json.dumps(metadata, indent=2) + '\n')
-notes = f'''PC Browser Mac {version} ({arch})
+run_url = metadata['workflow_run'] or 'n/a'
+header = f'''# PC Browser Mac {version}（{arch}・build {metadata['bundle_build']}）
 
-Built by GitHub Actions from {metadata['source_commit']}.
-Synthetic unit tests passed: {tests}; failures: 0.
-App signature and binaries verified after ZIP extraction; packaged CLI synthetic catalog/lazy-load smoke test passed.
-The app is ad-hoc signed, not Apple-notarized. macOS 14+ / Apple Silicon for the arm64 package.
+**ビルド情報（GitHub Actionsが自動記録）**
+- ビルド元コミット: `{metadata['source_commit']}`
+- 実行: {run_url}
+- 合成データの単体テスト: {tests}件成功・失敗0
+- アプリの署名とバイナリをZIP展開後に検査し、展開した.appのCLIによる合成データのスモーク検査（カタログ・遅延読み込み）に成功
+- アドホック署名・Apple公証なし。macOS 14以降・Apple Silicon（arm64）用
+- 録画・ディスクイメージ・座標・機器設定は、Actionsにもこのパッケージにも含めていません
 
-This build includes continuous-recording grouping and header-only catalog/lazy loading. It does not assert full Windows parity, factory optical calibration, physical SD E2E, all-card video decoding or renewed private-media GUI validation.
-Private recordings, disk images, coordinates and device settings were not uploaded to Actions or packaged.
-See README.md, docs/ci-build.md, docs/session-catalog.md and docs/validation-catalog.md in the source ZIP.
 '''
-(dist / 'RELEASE-NOTES.txt').write_text(notes)
+curated = Path('docs/release-notes.md')
+if curated.exists():
+    body = curated.read_text(encoding='utf-8')
+else:
+    body = (f'PC Browser Mac {version} ({arch})\n\n'
+            'This build does not assert full Windows parity, factory optical calibration, physical SD E2E, all-card video decoding or renewed private-media GUI validation.\n'
+            'See README.md, docs/ci-build.md and docs/validation-gaps.md in the source ZIP.\n')
+notes = header + body
+(dist / 'RELEASE-NOTES.txt').write_text(notes, encoding='utf-8')
 files = sorted(p for p in dist.iterdir() if p.is_file() and p.name != 'SHA256SUMS')
 (dist / 'SHA256SUMS').write_text(''.join(hashlib.sha256(p.read_bytes()).hexdigest() + '  ' + p.name + '\n' for p in files))
 summary = os.getenv('GITHUB_STEP_SUMMARY')

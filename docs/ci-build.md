@@ -9,6 +9,7 @@
 - `PC-Browser-Mac-arm64-<run番号>` artifactに、.appを収めたZIP、同じcommitのソースZIP、`SHA256SUMS`、`build-metadata.json`、`ci-smoke.json`、説明を保存する。保持30日。
 - 合成テストのログは別artifactに保持14日。失敗時も可能な限り保存する。
 - `v*`タグでは、ビルド成功後に同じ成果物をGitHub Releaseへ公開する。ハイフンを含む版はprerelease。既存releaseは上書きしない。
+- タグを直接作れない環境では、`main`に対する手動の`Run workflow`で`release_tag`（例：`v0.2.0-beta.2`）を入力すると、同じ検査を通ったあとに`gh release create`がそのcommitへタグを作ってreleaseを公開する（`main`以外・形式不正・既存releaseのタグは失敗）。リリース本文は`docs/release-notes.md`の固定文に、実行ごとのビルド情報（commit・テスト数・実行URL）を先頭に付けて作る。
 - `APP_VERSION`はタグの`v`を除いた値、通常branchではbuild scriptの既定値。ビルド番号・commit・実行URLを成果物から確認する。
 
 ## 検査

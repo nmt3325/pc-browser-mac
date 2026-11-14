@@ -1,7 +1,7 @@
 # PC Browser Mac
 
 Yupiteru PC Browser録画用SDカード／IMGをMacで確認する、独立したネイティブGUIです。
-**v0.2.0-beta.2 / build 14（ベータ版）。Windows版PC Browser 1.9.60.0の全機能互換には達していません。** 達成した範囲と未達の範囲は[機能差分](docs/feature-parity.md)・[未検証事項](docs/validation-gaps.md)・[原版メニュー全150項目の棚卸し](docs/menu-inventory.md)に項目ごとに書いています。
+**v0.2.0-beta.2 / build 15（ベータ版）。Windows版PC Browser 1.9.60.0の全機能互換には達していません。** 達成した範囲と未達の範囲は[機能差分](docs/feature-parity.md)・[未検証事項](docs/validation-gaps.md)・[原版メニュー全150項目の棚卸し](docs/menu-inventory.md)に項目ごとに書いています。
 
 旧版の450フレームごとの区切りは、30fpsで約15秒の内部保存単位でした。今回は録画開始・継続の参照を解析し、同じセッション・CH・メディア形式のブロックを1本のタイムラインで扱います。最初に映像・音声を全走査せず、カタログを逐次表示し、選択した録画の詳細だけを後から読み込みます。[実装根拠](docs/session-catalog.md)・[検証記録](docs/validation-full-port.md)を参照してください。
 

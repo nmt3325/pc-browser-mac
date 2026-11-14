@@ -6,6 +6,12 @@ on:
     tags: ['v*']
   pull_request:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Optional. Publish this build from main as a GitHub release with this version tag (for example v0.2.0-beta.2). Leave empty to only build and test.'
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
@@ -22,6 +28,22 @@ jobs:
     env:
       MACOSX_DEPLOYMENT_TARGET: '14.0'
     steps:
+      - name: Validate the requested release tag
+        if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
+        shell: bash
+        env:
+          REQUESTED_TAG: ${{ inputs.release_tag }}
+          BUILD_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$REQUESTED_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "Invalid release tag: $REQUESTED_TAG" >&2
+            exit 1
+          fi
+          if [[ "$BUILD_REF" != refs/heads/main ]]; then
+            echo "Releases are only published from main (this run is on $BUILD_REF)" >&2
+            exit 1
+          fi
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -44,10 +66,13 @@ jobs:
         env:
           BUILD_REF_TYPE: ${{ github.ref_type }}
           BUILD_REF_NAME: ${{ github.ref_name }}
+          REQUESTED_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || '' }}
         run: |
           set -euo pipefail
           if [[ "$BUILD_REF_TYPE" == tag ]]; then
             export APP_VERSION="${BUILD_REF_NAME#v}"
+          elif [[ -n "$REQUESTED_TAG" ]]; then
+            export APP_VERSION="${REQUESTED_TAG#v}"
           fi
           bash scripts/build-app.sh
       - name: Verify extracted package and generate downloads
@@ -83,7 +108,7 @@ jobs:
 
   release:
     name: Publish version-tagged build
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '' && github.ref == 'refs/heads/main')
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -100,15 +125,33 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
-          TAG: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          REQUESTED_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || '' }}
           SOURCE_COMMIT: ${{ github.sha }}
         run: |
           set -euo pipefail
+          # A pushed tag already exists (verify it); a dispatched release lets `gh` create the tag at the built commit.
+          if [[ "$REF_TYPE" == tag ]]; then
+            TAG="$REF_NAME"
+            tagflags=(--verify-tag)
+          else
+            TAG="$REQUESTED_TAG"
+            tagflags=()
+          fi
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "Refusing to publish: invalid tag $TAG" >&2
+            exit 1
+          fi
+          if gh release view "$TAG" --repo "$REPOSITORY" >/dev/null 2>&1; then
+            echo "Refusing to overwrite the existing release $TAG" >&2
+            exit 1
+          fi
           cd dist
           sha256sum --check SHA256SUMS
           flags=()
           if [[ "$TAG" == *-* ]]; then flags+=(--prerelease); fi
-          gh release create "$TAG" --repo "$REPOSITORY" --verify-tag \
+          gh release create "$TAG" --repo "$REPOSITORY" "${tagflags[@]}" \
             --target "$SOURCE_COMMIT" --title "PC Browser Mac ${TAG#v}" \
             --notes-file RELEASE-NOTES.txt "${flags[@]}" \
             ./*.zip SHA256SUMS build-metadata.json ci-smoke.json
