@@ -204,60 +204,51 @@ final class RecordListTests: XCTestCase {
 
     // MARK: journal
 
-    private func record(_ kind: Int, _ a: Int64 = 0, _ b: Int64 = 0, device: String = "YQA1018762") -> Data {
-        var d = Data(count: 256)
-        guard kind != 0 else { return d }
-        put(kind == 2 ? 0xFFFFE202 : 0xFFFFE201, 0, &d)
-        func clock(_ t: Int64, _ o: Int) {
-            let c = CivilTime.components(t)
-            d[o] = UInt8(c.year - 2000); d[o + 1] = UInt8(c.month); d[o + 2] = UInt8(c.day); d[o + 3] = UInt8(c.hour); d[o + 4] = UInt8(c.minute); d[o + 5] = UInt8(c.second)
-        }
-        clock(a, 0x0E); clock(b, 0x1E)
-        d.replaceSubrange(0x9A..<0xA4, with: Data(device.utf8))
-        return d
-    }
     private let t0 = CivilTime.seconds(year: 2026, month: 5, day: 1, hour: 9, minute: 0, second: 0)
-    /// Five rows written oldest first from slot 350 of a 400-slot ring, so the sequence wraps around the ring end.
-    private func journalImage() -> (Data, Range<UInt64>) {
-        var seq: [Data] = []
-        func samples(_ n: Int, base: Int64, offset: (Int) -> Int64) { for i in 0..<n { seq.append(record(2, base + Int64(i) - offset(i), base + Int64(i))) } }
+    private func marker(_ a: Int64, _ b: Int64) -> JournalRecord { JournalRecord(kind: 1, a: a, b: b, fix: 0) }
+    private var gap: JournalRecord { JournalRecord(kind: 0) }
+    /// Five rows written oldest first from slot 100 of a full 192-slot ring, so the sequence wraps around the ring end.
+    /// Samples carry a GPS fix except those of the second row; the markers between the rows carry none.
+    private func journalImage() -> (data: Data, area: Range<UInt64>) {
+        var seq: [JournalRecord] = []
+        func samples(_ n: Int, base: Int64, fix: UInt8 = 3, offset: (Int) -> Int64) {
+            for i in 0..<n { seq.append(JournalRecord(kind: 2, a: base + Int64(i) - offset(i), b: base + Int64(i), fix: fix)) }
+        }
         samples(100, base: t0 + 30) { _ in 61 }
-        seq += [record(1, t0 + 130 - 61, t0 + 130), record(1, t0 + 5399, t0 + 5399)]
-        samples(20, base: t0 + 5400) { _ in 0 }
-        seq += [record(1, t0 + 5420, t0 + 5420), record(0), record(1, t0 + 8999, t0 + 8999)]
+        seq += [marker(t0 + 130 - 61, t0 + 130), gap, gap, marker(t0 + 5399, t0 + 5399)]
+        samples(20, base: t0 + 5400, fix: 0) { _ in 0 }
+        seq += [marker(t0 + 5420, t0 + 5420), gap, marker(t0 + 8999, t0 + 8999)]
         samples(30, base: t0 + 9000) { $0 < 15 ? 70 : 0 }
-        seq += [record(1, t0 + 9030, t0 + 9030), record(0), record(1, t0 + 9300 - 61, t0 + 9300), record(0), record(1, t0 + 12599, t0 + 12599)]
+        seq += [marker(t0 + 9030, t0 + 9030), gap, marker(t0 + 9300 - 61, t0 + 9300), gap, marker(t0 + 12599, t0 + 12599)]
         samples(30, base: t0 + 12600) { $0 < 10 ? 61 : 161 }
-        var d = Data(count: 300 * 512)
-        for (k, r) in seq.enumerated() { let slot = (350 + k) % 400, o = 20 * 512 + slot * 256; d.replaceSubrange(o..<o + 256, with: r) }
-        return (d, 20..<220)
+        XCTAssertEqual(seq.count, 192)
+        return JournalImage.make(ring: 192, firstSlot: 100, seq)
     }
     func testJournalRowsFollowRunsMarkersAndTheRingOrder() throws {
-        let (data, area) = journalImage()
-        let log = try XCTUnwrap(HistoryLog.read(source: MemorySource(data), area: area))
-        XCTAssertEqual(log.newestSlot, (350 + 189) % 400)
-        XCTAssertEqual(log.rows.map(\.startText), ["2026/05/01 08:59", "2026/05/01 10:29", "2026/05/01 11:28", "2026/05/01 11:33", "2026/05/01 12:28"])
-        XCTAssertEqual(log.rows.map(\.durationText), ["1分", "21秒", "31秒", "1秒", "32秒"])
-        XCTAssertEqual(log.rows.map(\.records), [100, 20, 30, 1, 30])
+        let log = try XCTUnwrap(JournalImage.log(journalImage()))
+        XCTAssertEqual(log.newestSlot, (100 + 191) % 192)
+        XCTAssertEqual(log.rows.map(\.startText), ["2026/05/01 08:59", "2026/05/01 10:29", "2026/05/01 11:29", "2026/05/01 11:35", "2026/05/01 12:29"])
+        XCTAssertEqual(log.rows.map(\.durationText), ["1分", "21秒", "31秒", "1秒", "31秒"])
+        XCTAssertEqual(log.rows.map(\.records), [101, 22, 32, 1, 31], "entries = data lines: samples, the two closing markers, the lone marker, the closing entry")
         XCTAssertEqual(log.rows.map(\.kind), [.session, .session, .session, .marker, .session])
         XCTAssertEqual(log.rows.map(\.id), [0, 1, 2, 3, 4])
         XCTAssertTrue(log.rows.allSatisfy { $0.deviceID == "YQA1018762" })
-        XCTAssertEqual([log.sampleRecords, log.markerRecords, log.emptyRecords, log.otherRecords, log.slotCount], [180, 7, 213, 0, 400])
+        XCTAssertEqual([log.sampleRecords, log.markerRecords, log.emptyRecords, log.otherRecords, log.slotCount], [180, 7, 5, 0, 192])
     }
-    func testJournalStartUsesClockBForMatchingVideoAndSecondRounding() throws {
-        let (data, area) = journalImage()
-        let log = try XCTUnwrap(HistoryLog.read(source: MemorySource(data), area: area))
-        XCTAssertEqual(log.rows[0].videoClockStart, t0 + 30)
-        XCTAssertEqual(log.rows[0].start, t0 + 30 - 61)
-        XCTAssertEqual(log.rows[1].start, t0 + 5399, "unsynchronised clocks (A equals B) start one second earlier")
+    func testJournalStartShowsTheGPSClockWithAFixAndTheBodyClockOtherwise() throws {
+        let log = try XCTUnwrap(JournalImage.log(journalImage()))
+        XCTAssertEqual(log.rows[0].videoClockStart, t0 + 30, "the free-running clock B of the first record finds the matching video")
+        XCTAssertEqual(log.rows[0].start, t0 + 31 - 61, "clock A of the first listed record: scan position 0 only supplies that line's data")
+        XCTAssertEqual(log.rows[1].start, t0 + 5399, "no fix: the body clock of the record before, one second earlier than the first sample")
         XCTAssertEqual(log.rows[0].durationText, "1分")
     }
-    func testJournalDurationRuleForForwardAndBackwardClockJumps() throws {
-        let (data, area) = journalImage()
-        let rows = try XCTUnwrap(HistoryLog.read(source: MemorySource(data), area: area)).rows
-        XCTAssertEqual(rows[2].duration, 31, "forward jump: n+1")
-        XCTAssertEqual(rows[4].duration, 32, "backward jump: n+1+1")
-        XCTAssertEqual(rows[1].duration, 21, "steady clock: span+2")
+    func testJournalDurationIsTheClockSpanUnlessItDisagreesWithTheEntryCount() throws {
+        let rows = try XCTUnwrap(JournalImage.log(journalImage())).rows
+        XCTAssertEqual(rows[1].duration, 21, "steady clock: span 21 = entries - 1")
+        XCTAssertEqual(rows[2].duration, 31, "span 31 = entries - 1")
+        XCTAssertEqual(rows[0].duration, 101, "a span of 160 seconds disagrees with 100 intervals: the entry count")
+        XCTAssertEqual(rows[4].duration, 31, "backward clock: the entry count")
+        XCTAssertEqual(rows[3].duration, 1, "a lone marker is one second")
     }
     func testJournalIsNotReadFromPartialSourcesOrWithoutSamples() throws {
         let (data, area) = journalImage()
@@ -276,20 +267,16 @@ final class RecordListTests: XCTestCase {
         XCTAssertThrowsError(try HistoryLog.read(source: MemorySource(data), area: area, cancelled: { true }))
     }
     func testJournalOfAnUnwrappedRingHasNoMarkerRowFromTheEmptyTail() throws {
-        var d = Data(count: 300 * 512)
-        var seq: [Data] = []
-        for i in 0..<40 { seq.append(record(2, t0 + Int64(i), t0 + Int64(i))) }
-        seq.insert(record(1, t0 - 1, t0 - 1), at: 0)
-        for (k, r) in seq.enumerated() { let o = 20 * 512 + k * 256; d.replaceSubrange(o..<o + 256, with: r) }
-        let log = try XCTUnwrap(HistoryLog.read(source: MemorySource(d), area: 20..<220))
+        var seq = [JournalRecord(kind: 1, a: t0 - 1, b: t0 - 1)]
+        for i in 0..<40 { seq.append(JournalRecord(kind: 2, a: t0 + Int64(i), b: t0 + Int64(i))) }
+        let log = try XCTUnwrap(JournalImage.log(JournalImage.make(ring: 400, firstSlot: 0, seq)))
         XCTAssertEqual(log.rows.count, 1)
-        XCTAssertEqual(log.rows[0].records, 40)
-        XCTAssertEqual(log.rows[0].startText, "2026/05/01 08:59")
+        XCTAssertEqual(log.rows[0].records, 41, "40 samples and the closing entry")
+        XCTAssertEqual(log.rows[0].startText, "2026/05/01 08:59", "no record before the first one: its own clock B minus one second")
         XCTAssertEqual(log.rows[0].durationText, "41秒")
     }
     func testJournalRowFindsTheVideoSessionByClockB() throws {
-        let (data, area) = journalImage()
-        let log = try XCTUnwrap(HistoryLog.read(source: MemorySource(data), area: area))
+        let log = try XCTUnwrap(JournalImage.log(journalImage()))
         let src = MemorySource(CatalogTests().fixture([Spec(record: 10, start: true)]))
         let video = try CatalogScanner.scan(src).recordings
         let c = try XCTUnwrap(video.first?.blocks.first?.first.telemetry.clock)
@@ -300,6 +287,6 @@ final class RecordListTests: XCTestCase {
         XCTAssertNil(log.matchingRecording(for: far, in: video))
     }
     func testListKindsCarryTheOriginalTabNames() {
-        XCTAssertEqual(RecordListKind.allCases.map(\.title), ["履歴記録", "イベント記録", "常時録画"])
+        XCTAssertEqual(RecordListKind.allCases.map(\.title), ["イベント記録", "常時録画", "履歴記録"])
     }
 }
