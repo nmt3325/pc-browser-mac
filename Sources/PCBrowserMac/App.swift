@@ -222,6 +222,41 @@ final class ScanCancellation: @unchecked Sendable {
         try await checkViewOperations(result:&result,folder:folder)
         try await checkLegacyMenu(result:&result,folder:folder)
     }
+    /// 表示 ▸ 画面表示 ▸ 16分割表示: enabled only for the FDR class (grayed out for Q-01 like the original), and the sheet
+    /// really holds the sixteen most recent frames, the newest bottom right, shifting one tile per frame.
+    private func checkFrameHistoryMenu(controller:LegacyMenuController,result:inout [String:Any]) async throws {
+        guard let fdr=LegacyModelCatalog.all.first(where:{$0.name == "FDR-800"}),let q01=LegacyModelCatalog.all.first(where:{$0.name == "Q-01"}),
+              let item310=controller.menuItem(tag:310),let item311=controller.menuItem(tag:311) else{throw BrowserError.io("画面表示メニューが不足しています")}
+        func checked(_ item:NSMenuItem)->Bool{_=controller.validateMenuItem(item);return item.state == .on}
+        model.projection.mode = .perspective
+        controller.dispatch(q01.commandID)
+        guard !controller.validateMenuItem(item311),!controller.validateMenuItem(item310),checked(item310) else{throw BrowserError.io("Q-01で画面表示メニューがグレーアウトされていません")}
+        controller.dispatch(fdr.commandID)
+        guard controller.validateMenuItem(item311),controller.validateMenuItem(item310),!checked(item311),checked(item310) else{throw BrowserError.io("FDR-800で画面表示メニューが有効になりません")}
+        controller.dispatch(311)
+        guard model.projection.mode == .frameHistory,checked(item311),!checked(item310) else{throw BrowserError.io("16分割表示メニューが反映されません")}
+        func mean(_ image:CGImage,_ rect:CGRect)->[Double]?{
+            guard let part=image.cropping(to:rect),let context=CGContext(data:nil,width:1,height:1,bitsPerComponent:8,bytesPerRow:4,space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue),!rect.isEmpty else{return nil}
+            context.interpolationQuality = .high;context.draw(part,in:CGRect(x:0,y:0,width:1,height:1))
+            guard let data=context.data else{return nil};let p=data.bindMemory(to:UInt8.self,capacity:4);return [Double(p[0]),Double(p[1]),Double(p[2])]
+        }
+        func close(_ a:[Double]?,_ b:[Double]?,_ tolerance:Double)->Bool{guard let a,let b else{return false};return zip(a,b).allSatisfy{abs($0-$1)<=tolerance}}
+        await model.renderFrame(0)
+        guard let first=model.displayedFrame,let raw0=model.rawFrame else{throw BrowserError.io("16分割表示のシートを取得できません")}
+        let size=FrameHistorySheet.pictureSize(sourceWidth:raw0.width,sourceHeight:raw0.height),layout=FrameHistorySheet.layout(pictureWidth:size.width,pictureHeight:size.height)
+        guard first.width == layout.width,first.height == layout.height else{throw BrowserError.io("16分割表示のシートの大きさが想定と異なります")}
+        func slot(_ image:CGImage,_ index:Int)->CGRect{let p=layout.pictures[index];return CGRect(x:p.x,y:p.y,width:p.width,height:p.height)}
+        // Frame 0 is the newest tile; the fifteen before it do not exist and show the empty tile colour.
+        guard close(mean(first,slot(first,0)),[25.5,25.5,25.5],8),close(mean(first,slot(first,15)),mean(raw0,CGRect(x:0,y:0,width:raw0.width,height:raw0.height)),20) else{throw BrowserError.io("16分割表示の最初のシートが想定と異なります")}
+        let before=mean(first,slot(first,15))
+        await model.renderFrame(1)
+        guard let second=model.displayedFrame,let raw1=model.rawFrame,second.width == layout.width else{throw BrowserError.io("16分割表示の次のシートを取得できません")}
+        guard close(mean(second,slot(second,14)),before,3),close(mean(second,slot(second,15)),mean(raw1,CGRect(x:0,y:0,width:raw1.width,height:raw1.height)),20) else{throw BrowserError.io("16分割表示でコマが1つ前へ送られません")}
+        result["frame_history_sheet"]=["width":second.width,"height":second.height,"tiles":FrameHistorySheet.tileCount,"enabled_for_fdr":true,"grayed_for_q01":true] as [String:Any]
+        model.projection.mode = .perspective;model.modeBeforeFrameHistory = .perspective
+        controller.dispatch(311);controller.dispatch(310)
+        guard model.projection.mode == .perspective,checked(item310) else{throw BrowserError.io("1画面表示メニューが反映されません")}
+    }
     /// Verifies the original-command menu bar and exercises the non-modal commands.
     private func checkLegacyMenu(result:inout [String:Any],folder:URL) async throws {
         guard let controller=legacyMenu,let main=NSApp.mainMenu else{throw BrowserError.io("原版メニューが作成されていません")}
@@ -239,8 +274,9 @@ final class ScanCancellation: @unchecked Sendable {
         controller.dispatch(382);guard model.showMap,checked(382) else{throw BrowserError.io("地図表示メニューが反映されません")}
         for model_ in LegacyModelCatalog.all{controller.dispatch(model_.commandID);guard model.legacyModelID == model_.commandID,window?.title == model_.windowTitle+" — Mac 読み取り専用",checked(model_.commandID) else{throw BrowserError.io("機種選択メニューが反映されません: \(model_.name)")}}
         for (id,mode) in LegacyMenuController.singleScreenModes{controller.dispatch(id);guard model.projection.mode == mode,checked(id) else{throw BrowserError.io("周囲カメラ表示メニューが反映されません: \(id)")}}
-        controller.dispatch(311);guard model.projection.mode == .grid16 else{throw BrowserError.io("16分割表示メニューが反映されません")}
-        controller.dispatch(310);guard model.projection.mode == .perspective else{throw BrowserError.io("1画面表示メニューが反映されません")}
+        try await checkFrameHistoryMenu(controller:controller,result:&result)
+        controller.dispatch(9018);guard model.projection.mode == .grid16,checked(9018) else{throw BrowserError.io("16方向ビューのメニューが反映されません")}
+        controller.dispatch(310);guard model.projection.mode == .perspective,!checked(9018),checked(310) else{throw BrowserError.io("1画面表示メニューが反映されません")}
         controller.dispatch(304);guard !model.fileListVisible,!checked(304) else{throw BrowserError.io("ファイルリスト表示メニューが反映されません")}
         controller.dispatch(304);guard model.fileListVisible else{throw BrowserError.io("ファイルリスト表示メニューが戻りません")}
         let oldVolume=model.volume;controller.dispatch(360);guard model.volume<oldVolume || oldVolume==0 else{throw BrowserError.io("音量小さくメニューが反映されません")}

@@ -218,7 +218,7 @@ def media_smoke(binary, root, strict, gui_strict=False, evidence=None):
             assert sum(1 for v in view.values() if v == 'passed') >= 10, view
             assert data['route_points'] == 120 and data['raw_sensor_points'] == 720 and data['reverse_playback_decreased'] is True, data
             assert data['continuously_played_boundaries'] == [40, 80] and data['audio_prepared'] is True, data
-            assert len(data['projection_modes']) == 9 and all(data['projection_modes'].values()), data
+            assert len(data['projection_modes']) == 10 and all(data['projection_modes'].values()), data  # nine Metal modes + the 16分割 frame-history sheet
             assert sorted(data['legacy_report_pages']) == ['continuous', 'event'], data.get('legacy_report_pages')
             for name in ('main.png', 'view-ops-flip-rotate.png', 'detached-view.png', 'recording-report.png', 'report-page-event.png', 'report-page-continuous.png'):
                 assert (folder / name).stat().st_size > 5000, name
