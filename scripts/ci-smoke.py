@@ -234,6 +234,44 @@ def media_smoke(binary, root, strict, gui_strict=False, evidence=None):
                 'projection_modes': len(data['projection_modes']), 'reverse_playback_decreased': True,
                 'playback_advanced_to_frame': data.get('playback_advanced_to_frame')}
 
+    def blank_video():
+        """A card whose video and audio areas are zero-filled (like the continuous recordings of the sample card) must stay usable:
+        the picture area says so instead of raising a decoder alert, and the clock, route and sensors keep working."""
+        folder = root / 'blank'
+        folder.mkdir()
+        blank = folder / 'synthetic-blank-video.img'
+        content = synthetic_media.build(blank_video=True)
+        assert len(content) == len(original) and content != original
+        blank.write_bytes(content)
+        blank.chmod(0o444)
+        structure = folder / 'structure.json'
+        run_cli(binary, '--inspect', blank, '--catalog-only', '--load-all', '--report', structure)
+        report = load_json(structure)
+        assert (report['recordings'], report['storage_blocks'], report['validated_frames']) == (1, 3, 120), report
+        refused = subprocess.run([str(binary), '--inspect', str(blank), '--decode-check', '--max-decode', '5'], capture_output=True, text=True, timeout=120)
+        assert refused.returncode != 0 and '映像データがありません' in refused.stderr and 'SPS/PPS' not in refused.stderr, (refused.returncode, refused.stderr[-500:])
+        gui = folder / 'gui'
+        gui.mkdir()
+        process = subprocess.run([str(binary), '--image', str(blank), '--ui-check-report', str(gui / 'report.json'), '--ui-snapshot', str(gui / 'main.png'),
+                                  '--ui-check-extra'], capture_output=True, text=True, timeout=300)
+        data = load_json(gui / 'report.json') if (gui / 'report.json').exists() else {}
+        try:
+            assert process.returncode == 0 and data.get('passed') is True, (process.returncode, data.get('error'), process.stderr[-600:])
+            assert data['video_available'] is False and '映像データがありません' in data['video_notice'], data
+            assert data['route_points'] == 120 and data['raw_sensor_points'] == 720 and data['playback_without_video_advanced_to_frame'] > 20, data
+            assert data['raw_filter_matches_and_excludes'] is True and data['video_dependent_checks_skipped'] == ['view_operations', 'legacy_menu'], data
+            assert (gui / 'main.png').stat().st_size > 5000
+        finally:
+            if evidence:
+                target = Path(evidence) / 'blank-video'
+                target.mkdir(parents=True, exist_ok=True)
+                for item in list(gui.glob('*.png')) + list(gui.glob('*.json')):
+                    (target / item.name).write_bytes(item.read_bytes())
+                (target / 'stderr-tail.txt').write_text(process.stderr[-4000:])
+        assert hashlib.sha256(blank.read_bytes()).hexdigest() == hashlib.sha256(content).hexdigest(), 'blank-video image changed'
+        return {'frames': 120, 'cli_decode_check_refused': True, 'video_available': False, 'route_points': data['route_points'],
+                'raw_sensor_points': data['raw_sensor_points'], 'playback_advanced_to_frame': data['playback_without_video_advanced_to_frame']}
+
     attempt(results, 'decode_and_features', strict, decode_and_features)
     if results['decode_and_features']['passed']:
         attempt(results, 'view_operations', strict, view_operations)
@@ -241,6 +279,8 @@ def media_smoke(binary, root, strict, gui_strict=False, evidence=None):
         attempt(results, 'gui_check', gui_strict, gui_check)
     else:
         results['view_operations'] = results['exports'] = results['gui_check'] = {'passed': False, 'error': 'skipped: system H.264 decoder unavailable'}
+    # Needs no H.264 decoder, only a window session: it is judged like the other GUI check.
+    attempt(results, 'blank_video', gui_strict, blank_video)
     assert hashlib.sha256(image.read_bytes()).hexdigest() == digest, 'input image changed'
     return results
 
