@@ -398,7 +398,9 @@ import PCBrowserCore
     /// How long showing a frame took (decode, picture conversion, projection) since the last reset. The GUI check reports it next to the
     /// audio/video clock difference, so a slow machine can be told from a playback fault.
     private(set) var renderCount=0,renderSecondsTotal=0.0,renderSecondsMax=0.0,projectSecondsTotal=0.0
-    func resetRenderStatistics() async {renderCount=0;renderSecondsTotal=0;renderSecondsMax=0;projectSecondsTotal=0;await renderer?.resetTiming()}
+    /// Frame number and milliseconds of each frame shown since the reset (first 400), for the GUI check report.
+    private(set) var renderLog:[[Double]]=[]
+    func resetRenderStatistics() async {renderCount=0;renderSecondsTotal=0;renderSecondsMax=0;projectSecondsTotal=0;renderLog=[];await renderer?.resetTiming()}
     /// Means in milliseconds for the frames shown since `resetRenderStatistics()`: decoding and picture conversion (video decoder), the
     /// projection step, and the whole time from request to the new picture (which also holds any wait for the main thread).
     func renderTiming() async -> [String:Double] {
@@ -408,6 +410,8 @@ import PCBrowserCore
                 "playback_convert_mean_ms":mean(timing.convertSeconds,timing.convertedFrames),"playback_converted_frames":Double(timing.convertedFrames),
                 "playback_project_mean_ms":mean(projectSecondsTotal,renderCount)]
     }
+    /// Milliseconds the renderer spent on each request since the reset (first 400): includes decoder restarts.
+    func renderCallMilliseconds() async -> [Double] {(await renderer?.timing.calls ?? []).map{($0*1000*10).rounded()/10}}
     func renderFrame(_ position:Int) async {
         guard let renderer,let r=recording,r.packets.indices.contains(position) else{return}
         renderRequest+=1;let request=renderRequest,selection=selectionGeneration,began=ProcessInfo.processInfo.systemUptime;rendering=true
@@ -416,7 +420,7 @@ import PCBrowserCore
             let projecting=ProcessInfo.processInfo.systemUptime
             let frame=try await displayPicture(raw,position:position,settings:settings,renderer:renderer)
             guard selectionGeneration==selection,request==renderRequest,!Task.isCancelled else{return}
-            let finished=ProcessInfo.processInfo.systemUptime,took=finished-began;renderCount+=1;renderSecondsTotal+=took;renderSecondsMax=max(renderSecondsMax,took);projectSecondsTotal+=finished-projecting
+            let finished=ProcessInfo.processInfo.systemUptime,took=finished-began;renderCount+=1;renderSecondsTotal+=took;renderSecondsMax=max(renderSecondsMax,took);projectSecondsTotal+=finished-projecting;if renderLog.count<400{renderLog.append([Double(position),(took*1000*10).rounded()/10])}
             projectionTask?.cancel();rawGeneration=UUID();rawFrame=raw;displayedFrame=frame;image=NSImage(cgImage:frame,size:NSSize(width:frame.width,height:frame.height));videoNotice=nil;frameIndex=position;scrubber=Double(position)
             if settings != projection {reproject()}
         }catch let unavailable as VideoUnavailableError{
