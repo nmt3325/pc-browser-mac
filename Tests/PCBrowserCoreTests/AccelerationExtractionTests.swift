@@ -8,19 +8,30 @@ final class AccelerationExtractionTests: XCTestCase {
     private let base = 10 * 3600
 
     private func clock(_ offset: Int) -> [UInt8] {
-        let t = base + offset
-        return [26, 11, 8, UInt8(t / 3600), UInt8(t / 60 % 60), UInt8(t % 60)]
+        let t: Int = base + offset
+        let hour: UInt8 = UInt8(t / 3600)
+        let minute: UInt8 = UInt8((t / 60) % 60)
+        let second: UInt8 = UInt8(t % 60)
+        var bytes: [UInt8] = [26, 11, 8]
+        bytes.append(hour); bytes.append(minute); bytes.append(second)
+        return bytes
     }
     private func frame(primary: Int, secondary: Int, intra: Bool = false, sequence: UInt32 = 0, acceleration: [Int16] = [0, 0, 0]) throws -> FramePacket {
         var h = FormatTests().packet()
         FormatTests().put(sequence, 4, &h); FormatTests().put(sequence, 0x1FC, &h)
         h[9] = intra ? 2 : 1
-        h.replaceSubrange(10..<17, with: clock(primary) + [0])
+        var primaryBytes: [UInt8] = clock(primary)
+        primaryBytes.append(0)
+        h.replaceSubrange(10..<17, with: primaryBytes)
         h.replaceSubrange(0x12..<0x18, with: clock(secondary))
         h[0x1d] = 30
         for (c, value) in acceleration.enumerated() {
-            let u = UInt16(bitPattern: value)
-            h[0x46 + 2 * c] = UInt8(u & 0xFF); h[0x47 + 2 * c] = UInt8(u >> 8)
+            let u: UInt16 = UInt16(bitPattern: value)
+            let low: UInt8 = UInt8(u & 0xFF)
+            let high: UInt8 = UInt8(u >> 8)
+            let at: Int = 0x46 + 2 * c
+            h[at] = low
+            h[at + 1] = high
         }
         return try FramePacket.parse(h, sector: 10, diskBytes: 100 * 512)
     }
@@ -28,10 +39,16 @@ final class AccelerationExtractionTests: XCTestCase {
     /// ahead of the primary one.
     private func steady(_ count: Int, intra: Set<Int>, startAt: Int = 0, secondaryAhead: Int = 0, firstSequence: UInt32 = 0,
                         acceleration: (Int) -> [Int16] = { _ in [0, 0, 0] }) throws -> [FramePacket] {
-        try (0..<count).map { i in
-            try frame(primary: startAt + 10 * i - secondaryAhead, secondary: startAt + 10 * i, intra: i == 0 || intra.contains(i),
-                      sequence: firstSequence + UInt32(i), acceleration: acceleration(i))
+        var frames: [FramePacket] = []
+        for i in 0..<count {
+            let secondary: Int = startAt + 10 * i
+            let primary: Int = secondary - secondaryAhead
+            let isIntra: Bool = i == 0 || intra.contains(i)
+            let sequence: UInt32 = firstSequence + UInt32(i)
+            let values: [Int16] = acceleration(i)
+            frames.append(try frame(primary: primary, secondary: secondary, intra: isIntra, sequence: sequence, acceleration: values))
         }
+        return frames
     }
     private func recording(_ frames: [FramePacket]) -> Recording { Recording(id: "r", recordSector: 10, channel: 1, packets: frames) }
 

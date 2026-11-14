@@ -141,14 +141,29 @@ enum InspectionCLI {
                     let loaded=try CatalogScanner.loadRecording(summary,source:source)
                     let found=AccelerationExtraction.entries(in:loaded)
                     scenes+=found
-                    perRecording.append(["number":number,"recording":summary.id,"frames":loaded.packets.count,"first_sequence":Int(loaded.packets.first?.sequence ?? 0),"listed_scenes":found.count,
-                        "scenes":found.map{["first_frame":$0.firstFrame,"frames":$0.frameCount,"time":$0.timeText,"points":$0.points] as [String:Any]}])
+                    var sceneRows:[[String:Any]]=[]
+                    for scene in found {
+                        var row:[String:Any]=[:]
+                        row["first_frame"]=scene.firstFrame;row["frames"]=scene.frameCount;row["time"]=scene.timeText;row["points"]=scene.points
+                        sceneRows.append(row)
+                    }
+                    var line:[String:Any]=[:]
+                    line["number"]=number;line["recording"]=summary.id;line["frames"]=loaded.packets.count
+                    line["first_sequence"]=Int(loaded.packets.first?.sequence ?? 0);line["listed_scenes"]=found.count;line["scenes"]=sceneRows
+                    perRecording.append(line)
                 }
                 let device=DeviceIdentity.read(from:source,control:result.control) ?? "—"
-                let rows=AccelerationExtraction.ranked(scenes,count:count)
-                report["acceleration_extraction"]=["scope":"Rules measured on the running original 1.9.60.0 (FDR-820 continuous recordings); see docs/video-extraction-research.md for what is not established",
-                    "count":count,"recordings":numbers,"device_id":device,"listed_scenes":scenes.count,
-                    "table":rows.enumerated().map{[$0.offset+1,$0.element.timeText,$0.element.points,device] as [Any]},"per_recording":perRecording] as [String:Any]
+                let ranked=AccelerationExtraction.ranked(scenes,count:count)
+                var table:[[Any]]=[]
+                for (position,entry) in ranked.enumerated() {
+                    let tableRow:[Any]=[position+1,entry.timeText,entry.points,device]
+                    table.append(tableRow)
+                }
+                var accel:[String:Any]=[:]
+                accel["scope"]="Rules measured on the running original 1.9.60.0 (FDR-820 continuous recordings); see docs/video-extraction-research.md for what is not established"
+                accel["count"]=count;accel["recordings"]=numbers;accel["device_id"]=device;accel["listed_scenes"]=scenes.count
+                accel["table"]=table;accel["per_recording"]=perRecording
+                report["acceleration_extraction"]=accel
             }
             if rawQueryRequested {
                 func integer(_ flag:String,_ fallback:Int,_ range:ClosedRange<Int>) throws ->Int {

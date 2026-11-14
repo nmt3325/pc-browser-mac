@@ -56,8 +56,11 @@ struct AccelerationRow: Identifiable {
                 }
                 let listed = AccelerationExtraction.ranked(scenes, count: limit)
                 rows = listed.enumerated().map { AccelerationRow(no: $0.offset + 1, entry: $0.element) }
-                status = listed.isEmpty ? "抽出できる場面がありませんでした（\(total)件の録画・\(scenes.count)場面）"
-                                        : "\(total)件の録画の\(scenes.count)場面から、動きポイントの大きい\(listed.count)件を表示しています"
+                if listed.isEmpty {
+                    status = "抽出できる場面がありませんでした（\(total)件の録画・\(scenes.count)場面）"
+                } else {
+                    status = "\(total)件の録画の\(scenes.count)場面から、動きポイントの大きい\(listed.count)件を表示しています"
+                }
             } catch {
                 guard self.token == token else { return }
                 status = flag.cancelled ? "映像抽出を中止しました" : "映像抽出を完了できませんでした: " + error.localizedDescription
@@ -142,13 +145,21 @@ struct AccelerationParameterSheet: View {
     @ObservedObject var state: AccelerationExtractionState
     @Environment(\.dismiss) private var dismiss
 
+    private var countBinding: Binding<Double> {
+        Binding<Double>(get: { Double(state.count) },
+                        set: { value in state.count = AccelerationExtraction.clampedCount(Int(value.rounded())) })
+    }
+    private var countBounds: ClosedRange<Double> {
+        let low = Double(AccelerationExtraction.countRange.lowerBound), high = Double(AccelerationExtraction.countRange.upperBound)
+        return low...high
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("加速度抽出パラメータ調整").font(.headline)
             HStack(spacing: 10) {
                 Text("個数")
-                Slider(value: Binding(get: { Double(state.count) }, set: { state.count = AccelerationExtraction.clampedCount(Int($0.rounded())) }),
-                       in: Double(AccelerationExtraction.countRange.lowerBound)...Double(AccelerationExtraction.countRange.upperBound), step: 1)
+                Slider(value: countBinding, in: countBounds, step: 1)
                 Text("値")
                 Text("\(state.count)").monospacedDigit().frame(width: 34, alignment: .trailing)
             }
