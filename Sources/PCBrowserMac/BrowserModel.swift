@@ -63,6 +63,11 @@ import PCBrowserCore
     var historyReportOverride:LegacyHistoryReport?
     /// Trigger types chosen in トリガ種類選択; nil shows every trigger of the recording.
     @Published var triggerTypeSelection:Set<String>?
+    /// 映像抽出: the 加速度抽出パラメータ調整 dialog, the tab that lists the result, the result itself, and the frame the next loaded recording jumps to.
+    @Published var showAccelerationParameters = false
+    @Published var bottomTab = BottomTab.info
+    let acceleration = AccelerationExtractionState()
+    var pendingSeek:(id:String,frame:Int)?
     @Published var selectedExports=Set<String>()
     @Published var bookmarks=Set<String>()
     @Published var inFrame=0
@@ -249,6 +254,7 @@ import PCBrowserCore
         audioPlayer=nil;audioClip=nil;renderer=nil;timeline=RecordingTimeline(packets:[])
         frameIndex=0;scrubber=0;scanning=false;busy=false;progress=0;selectionLoading=false;rendering=false
         selectedExports=[];cardFiles=[];rawQueryResults=[:];route=[];sensors=[];errorMessage=nil;videoNotice=nil
+        acceleration.reset();pendingSeek=nil;showAccelerationParameters=false;bottomTab = .info
         eventEntries=[];historyLog=nil;selectedJournalRows=[];historyStatus="";historyLoading=false;pendingLogConversion=false;showLogConversion=false;listKind = .continuous
         useExternalGPS=false;externalGPSTrack=nil;externalGPSStatus="外部ログ未選択";deviceTimeZoneID="";gpsLogOffset=0
         archiveNotice="";cardNotice="";audioStatus="音声なし";audioDuration=0;audioDrift=0;sourceName="未選択"
@@ -281,6 +287,7 @@ import PCBrowserCore
         if !recovery,!passwordAccepted(for:source) {closeData();status="パスワードが確認できなかったため、カードを読み込みませんでした";return}
         cancel();generation=UUID();let token=generation,flag=ScanCancellation(),began=ProcessInfo.processInfo.systemUptime;cancellation=flag
         self.source=source;scanLimit=limit;index=nil;selectedID=nil;image=nil;sourceName=name;progress=0;scanning=true;busy=false;errorMessage=nil;videoNotice=nil;selectedExports=[];cardFiles=[];rawQueryResults=[:]
+        acceleration.reset();pendingSeek=nil;showAccelerationParameters=false
         eventEntries=[];historyLog=nil;selectedJournalRows=[];historyStatus="";historyLoading=false;pendingLogConversion=false;showLogConversion=false;listKind = .continuous
         useExternalGPS=false;externalGPSTrack=nil;externalGPSStatus="外部ログ未選択";deviceTimeZoneID="";gpsLogOffset=0
         firstListSeconds=0;catalogSeconds=0;detailSeconds=0;archiveNotice=(source as? ArchiveSource)?.isHashVerified == false ? "バックアップSHA-256: 未照合（一覧表示後に照合）":(source is WindowsBackupSource || source is WindowsBackupSet ? "Windows BAK\((source as? WindowsBackupSet).map{"（\($0.parts.count)ファイル）"} ?? ""): 部分コピー・読み取り専用（元形式にSHA-256照合なし）":"")
@@ -374,7 +381,11 @@ import PCBrowserCore
         if rawQuery.hasConditions {rawQueryResults[r.id]=r.packets.contains(where:rawQuery.matches)}
         renderer=FrameRenderer(source:source,packets:r.packets);showLatency=PlaybackLatency();historyComposer=FrameHistoryComposer();timeline=RecordingTimeline(packets:r.packets);playbackFPS=timeline.nominalFPS
         inFrame=0;outFrame=max(0,r.packets.count-1);useRange=false;updateRoute();sensors=SensorSample.make(r,timeline:timeline)
-        let first=r.packets.firstIndex(where:{$0.isIntra}) ?? 0;Task{await renderFrame(first)}
+        // A line of the 映像抽出 list asked for this recording: start at the scene instead of the first picture.
+        let firstIntra=r.packets.firstIndex(where:{$0.isIntra}) ?? 0,asked=pendingSeek
+        let first=(asked != nil && asked!.id == r.id && r.packets.indices.contains(asked!.frame)) ? asked!.frame:firstIntra
+        pendingSeek=nil
+        Task{await renderFrame(first)}
         audioTask=Task {
             do {
                 let clip=try await Task.detached{guard r.packets.contains(where:{$0.auxiliaryBytes>0}) else{throw BrowserError.unsupported("音声データは記録されていません")};let format=try PCMFormat.recordFormat(source:source,recording:r);return try AudioClip.load(source:source,packets:r.packets,format:format,cancelled:{flag.cancelled})}.value
