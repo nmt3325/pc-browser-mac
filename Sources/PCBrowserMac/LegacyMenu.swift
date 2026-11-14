@@ -10,6 +10,8 @@ import PCBrowserCore
 
     static let recordingCommands: Set<Int> = [305, 314, 350, 351, 352, 353, 354, 355, 356, 372, 373, 374, 375, 377, 9010, 9011, 9012, 9013, 9014, 9015, 9016]
     static let singleScreenModes: [Int: ProjectionMode] = [340: .raw, 341: .perspective, 342: .panorama, 343: .ring, 344: .dome]
+    /// Display modes that show several pictures at once: 1画面表示 (310) leaves them.
+    static let multiPictureModes: Set<ProjectionMode> = [.frontRear, .quad, .grid16, .frameHistory]
 
     // MARK: Menu construction
     func buildMainMenu() -> NSMenu {
@@ -82,6 +84,8 @@ import PCBrowserCore
         menu.addItem(item("間隔指定のページ印刷…", 9016))
         menu.addItem(item("入力全体を新しいIMGへ複製…", 9017))
         menu.addItem(.separator())
+        menu.addItem(item("16方向ビュー（Mac独自の360°表示）", 9018))
+        menu.addItem(.separator())
         let viewRoot = NSMenuItem(title: "映像の操作（右クリック相当）", action: nil, keyEquivalent: ""), viewMenu = NSMenu(title: "映像の操作")
         viewRoot.submenu = viewMenu
         let viewItems: [(String, Int)] = [("標準に戻す", 501), ("範囲拡大", 502), ("移動", 503), ("回転", 504), ("左右反転", 505), ("上下反転", 506), ("前後反転", 507),
@@ -126,7 +130,9 @@ import PCBrowserCore
         case 301, 302, 303: menuItem.state = RecordListKind(commandID: id) == model.listKind ? .on : .off
         case 330...333: menuItem.state = model.sensorScale.commandID == id ? .on : .off
         case 340...344: menuItem.state = Self.singleScreenModes[id] == model.projection.mode ? .on : .off
-        case 311: menuItem.state = model.projection.mode == .grid16 ? .on : .off
+        case 310: menuItem.state = Self.multiPictureModes.contains(model.projection.mode) ? .off : .on
+        case 311: menuItem.state = model.projection.mode == .frameHistory ? .on : .off
+        case 9018: menuItem.state = model.projection.mode == .grid16 ? .on : .off
         case 362: menuItem.state = model.muted ? .on : .off
         case 380: menuItem.state = model.speedUnit == .kilometersPerHour ? .on : .off
         case 384: menuItem.state = model.speedUnit == .knots ? .on : .off
@@ -142,6 +148,11 @@ import PCBrowserCore
         }
         if let kind = ViewCommands.kind(commandID: id), kind != .closeWindow { return model.image != nil }
         if (555...559).contains(id) { return model.image != nil }
+        // 画面表示: the original enables 1画面 / 16分割 only for the FDR class; for the other classes both are grayed out
+        // (1画面 checked). 1画面表示 stays available on the Mac while one of its extra multi-picture views is shown.
+        if id == 311 { return model.image != nil && model.frameHistoryAvailable }
+        if id == 310 { return model.image != nil && (model.frameHistoryAvailable || Self.multiPictureModes.contains(model.projection.mode)) }
+        if id == 9018 { return model.image != nil }
         if id == 377, model.listKind == .history { return model.historyLog != nil && !model.busy && !model.scanning }
         // ログ変換 works without a loaded recording: it converts the journal of the opened input.
         if id == 374 { return model.source != nil && !model.busy && !model.scanning }
@@ -166,8 +177,9 @@ import PCBrowserCore
         case 305: model.printFrame()
         case 306: NSApp.terminate(nil)
         case 307: model.closeData()
-        case 310: if [.frontRear, .quad, .grid16].contains(model.projection.mode) { model.projection.mode = .perspective }
-        case 311: model.projection.mode = .grid16
+        case 310: model.showSingleScreen()
+        case 311: model.showFrameHistory()
+        case 9018: model.projection.mode = .grid16
         case 314: model.detachedPreview()
         case 330...333: if let scale = GSensorScale(commandID: id) { model.sensorScale = scale }
         case 340...344: if let mode = Self.singleScreenModes[id] { model.projection.mode = mode }

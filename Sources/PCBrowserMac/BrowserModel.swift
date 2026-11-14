@@ -89,7 +89,7 @@ import PCBrowserCore
     @Published var viewSelection:CGRect?
     var viewDragStart:ProjectionSettings?
     @Published var fileListVisible=true
-    @Published var legacyModelID=0 {didSet {if oldValue != legacyModelID {saveLegacyPreferences();onTitleChange?()}}}
+    @Published var legacyModelID=0 {didSet {if oldValue != legacyModelID {saveLegacyPreferences();leaveFrameHistoryIfUnavailable();onTitleChange?()}}}
     @Published var speedUnit=SpeedUnit.kilometersPerHour {didSet {if oldValue != speedUnit {saveLegacyPreferences()}}}
     @Published var sensorScale=GSensorScale.standard {didSet {if oldValue != sensorScale {saveLegacyPreferences()}}}
     @Published var sensorCalibration=SensorCalibration() {didSet {if oldValue != sensorCalibration {saveLegacyPreferences()}}}
@@ -107,6 +107,10 @@ import PCBrowserCore
     /// True when the loaded recording has sound (the original's 再生 key behaves differently with and without it).
     var hasAudioTrack:Bool{audioPlayer != nil}
     private var renderer:FrameRenderer?
+    /// Shrunk tiles of the 16分割表示 sheet of the loaded recording (a new instance per recording).
+    private var historyComposer=FrameHistoryComposer()
+    /// The single-screen mode 1画面表示 returns to after 16分割表示.
+    var modeBeforeFrameHistory=ProjectionMode.perspective
     private let projector=PreviewProjector()
     private var cancellation=ScanCancellation(),exportCancellation=ScanCancellation(),selectionCancellation=ScanCancellation(),verificationCancellation=ScanCancellation()
     private var scanLimit:UInt64?
@@ -207,7 +211,7 @@ import PCBrowserCore
         }
     }
     init() {
-        if let d=UserDefaults.standard.data(forKey:"pcbrowser.projection"),let p=try? JSONDecoder().decode(ProjectionSettings.self,from:d){projection=p.clamped}
+        if let d=UserDefaults.standard.data(forKey:"pcbrowser.projection"),let p=try? JSONDecoder().decode(ProjectionSettings.self,from:d){projection=p.clamped;if projection.mode == .frameHistory{projection.mode=.perspective}}
         if let s=UserDefaults.standard.string(forKey:"pcbrowser.gpsdatum"),let d=GPSDatum(rawValue:s){datum=d}
         let defaults=UserDefaults.standard
         if let model=LegacyModelCatalog.model(commandID:defaults.integer(forKey:"pcbrowser.legacyModel")){legacyModelID=model.commandID}
@@ -364,7 +368,7 @@ import PCBrowserCore
     }
     private func installSelection(_ r:Recording,source:any ByteSource,token:UUID,flag:ScanCancellation) {
         if rawQuery.hasConditions {rawQueryResults[r.id]=r.packets.contains(where:rawQuery.matches)}
-        renderer=FrameRenderer(source:source,packets:r.packets);timeline=RecordingTimeline(packets:r.packets);playbackFPS=timeline.nominalFPS
+        renderer=FrameRenderer(source:source,packets:r.packets);historyComposer=FrameHistoryComposer();timeline=RecordingTimeline(packets:r.packets);playbackFPS=timeline.nominalFPS
         inFrame=0;outFrame=max(0,r.packets.count-1);useRange=false;updateRoute();sensors=SensorSample.make(r,timeline:timeline)
         let first=r.packets.firstIndex(where:{$0.isIntra}) ?? 0;Task{await renderFrame(first)}
         audioTask=Task {
@@ -392,17 +396,22 @@ import PCBrowserCore
         renderRequest+=1;let request=renderRequest,selection=selectionGeneration;rendering=true
         do {
             let raw=try await renderer.render(position),settings=projection
-            let frame=try await projector.render(raw,settings:settings)
+            let frame=try await displayPicture(raw,position:position,settings:settings,renderer:renderer)
             guard selectionGeneration==selection,request==renderRequest,!Task.isCancelled else{return}
             projectionTask?.cancel();rawGeneration=UUID();rawFrame=raw;displayedFrame=frame;image=NSImage(cgImage:frame,size:NSSize(width:frame.width,height:frame.height));frameIndex=position;scrubber=Double(position)
             if settings != projection {reproject()}
         }catch{if selectionGeneration==selection,request==renderRequest,!Task.isCancelled{pause();errorMessage=error.localizedDescription}}
         if request==renderRequest{rendering=false}
     }
+    /// The picture shown for a decoded frame: re-projected, or for 16分割表示 the sheet of the sixteen most recent frames.
+    private func displayPicture(_ raw:CGImage,position:Int,settings:ProjectionSettings,renderer:FrameRenderer) async throws -> CGImage {
+        guard settings.mode == .frameHistory,let count=recording?.packets.count else{return try await projector.render(raw,settings:settings)}
+        return try await historyComposer.compose(current:position,frameCount:count,currentFrame:raw,renderer:renderer)
+    }
     func reproject() {
-        projectionTask?.cancel();guard let raw=rawFrame else{return};let settings=projection,selection=selectionGeneration,rawToken=rawGeneration
+        projectionTask?.cancel();guard let raw=rawFrame,let renderer else{return};let settings=projection,selection=selectionGeneration,rawToken=rawGeneration,position=frameIndex
         projectionTask=Task {
-            do {let image=try await projector.render(raw,settings:settings);guard !Task.isCancelled,selectionGeneration==selection,rawGeneration==rawToken else{return};displayedFrame=image;self.image=NSImage(cgImage:image,size:NSSize(width:image.width,height:image.height))}
+            do {let image=try await displayPicture(raw,position:position,settings:settings,renderer:renderer);guard !Task.isCancelled,selectionGeneration==selection,rawGeneration==rawToken else{return};displayedFrame=image;self.image=NSImage(cgImage:image,size:NSSize(width:image.width,height:image.height))}
             catch{if !Task.isCancelled{errorMessage=error.localizedDescription}}
         }
     }
